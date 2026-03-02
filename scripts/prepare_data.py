@@ -51,6 +51,14 @@ def main():
     n = validate_jsonl(SRC_FILE)
     print(f"[INFO] Found {n} valid samples")
 
+    # Clear existing data files to avoid schema conflicts
+    if os.path.isdir(TRIFORCE_DATA_DIR):
+        for f in os.listdir(TRIFORCE_DATA_DIR):
+            fp = os.path.join(TRIFORCE_DATA_DIR, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+                print(f"[INFO] Removed existing file: {f}")
+
     # Copy to TriForce data dir
     os.makedirs(TRIFORCE_DATA_DIR, exist_ok=True)
     shutil.copy2(SRC_FILE, DST_FILE)
