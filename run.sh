@@ -15,11 +15,14 @@ echo "[Step 1/7] GPU Check"
 nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
 echo ""
 
-# 2. Install dependencies
-echo "[Step 2/7] Installing Python dependencies ..."
+# 2. Install exact PyTorch version matching TriForce
+echo "[Step 2/7] Installing PyTorch 2.2.1+cu121 (TriForce requirement) ..."
+pip install torch==2.2.1 torchvision==0.17.1 torchaudio==2.2.1 --index-url https://download.pytorch.org/whl/cu121
+echo ""
+echo "[Step 2b] Installing other Python dependencies ..."
 pip install -r requirements.txt
 echo ""
-echo "[Step 2b] Installing flash-attn (may take 5-10 min) ..."
+echo "[Step 2c] Installing flash-attn (may take 5-10 min to compile) ..."
 pip install flash-attn==2.5.7 --no-build-isolation
 echo ""
 
