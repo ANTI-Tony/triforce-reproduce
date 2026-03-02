@@ -45,6 +45,7 @@ echo ""
 echo "[Step 4/7] Cloning TriForce ..."
 bash scripts/clone_triforce.sh
 pip install -q -r vendor/TriForce/requirements.txt
+bash scripts/patch_triforce.sh
 echo ""
 
 # 5. Prepare data
