@@ -1,0 +1,13 @@
+# TriForce dependencies — pinned versions for reproducibility
+# Based on the official TriForce repo (arXiv:2404.11912)
+
+transformers==4.37.2
+torch==2.2.1
+accelerate==0.27.2
+sentencepiece==0.2.0
+protobuf==4.25.3
+tokenizers==0.15.2
+huggingface_hub>=0.20.0
+
+# flash-attn must be installed separately:
+#   pip install flash-attn==2.5.7 --no-build-isolation

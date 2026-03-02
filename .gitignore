@@ -1,0 +1,30 @@
+# TriForce vendor code (cloned at runtime)
+vendor/
+
+# Experiment results
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HuggingFace cache
+*.bin
+*.safetensors
