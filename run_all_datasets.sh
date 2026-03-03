@@ -3,6 +3,11 @@
 # Usage: cd /workspace/tf/triforce-reproduce/vendor/TriForce && bash ../../run_all_datasets.sh
 set -euo pipefail
 
+# Redirect HuggingFace cache to Volume Disk (more space than Container Disk)
+export HF_HOME=/workspace/tf/hf_cache
+export TRANSFORMERS_CACHE=/workspace/tf/hf_cache
+export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
+
 RESULTS_DIR="/workspace/tf/triforce-reproduce/results"
 mkdir -p "$RESULTS_DIR"
 CSV="$RESULTS_DIR/all_results.csv"

@@ -5,9 +5,16 @@
 #   cd /workspace/triforce-reproduce && bash run.sh
 set -euo pipefail
 
+# Redirect HuggingFace cache to Volume Disk (more space than Container Disk)
+export HF_HOME=/workspace/tf/hf_cache
+export TRANSFORMERS_CACHE=/workspace/tf/hf_cache
+export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
+mkdir -p "$HF_HOME"
+
 echo "========================================="
 echo "  TriForce Reproduction Experiment"
 echo "========================================="
+echo "[INFO] HF cache: $HF_HOME"
 
 # 1. GPU Check
 echo ""
