@@ -23,7 +23,7 @@ echo ""
 
 # 2. Install dependencies
 echo "[Step 2/4] Installing Python dependencies ..."
-pip install 'torch>=2.6' torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install 'torch>=2.6' torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install transformers accelerate datasets tqdm termcolor sentencepiece protobuf
 echo ""
 
