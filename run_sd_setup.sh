@@ -30,11 +30,11 @@ echo ""
 # 3. Download models (Llama-2-7b-hf + llama-68m)
 echo "[Step 3/4] Downloading models ..."
 
-# Target: meta-llama/Llama-2-7b-hf (~14GB)
-echo "[3a] Downloading meta-llama/Llama-2-7b-hf ..."
+# Target: NousResearch/Llama-2-7b-hf (ungated mirror, ~14GB)
+echo "[3a] Downloading NousResearch/Llama-2-7b-hf ..."
 python3 -c "
 from huggingface_hub import snapshot_download
-path = snapshot_download('meta-llama/Llama-2-7b-hf')
+path = snapshot_download('NousResearch/Llama-2-7b-hf')
 print(f'[INFO] Llama-2-7b-hf downloaded to: {path}')
 "
 
@@ -51,7 +51,7 @@ echo ""
 echo "[Step 4/4] Model paths:"
 python3 -c "
 from huggingface_hub import snapshot_download
-p1 = snapshot_download('meta-llama/Llama-2-7b-hf', local_files_only=True)
+p1 = snapshot_download('NousResearch/Llama-2-7b-hf', local_files_only=True)
 p2 = snapshot_download('JackFram/llama-68m', local_files_only=True)
 print(f'  Target (Llama-2-7b): {p1}')
 print(f'  Drafter (llama-68m): {p2}')

@@ -52,10 +52,10 @@ def parse_args():
     parser.add_argument("--skip_baseline", action="store_true",
                         help="Skip autoregressive baseline")
     parser.add_argument("--small_model", type=str,
-                        default="/workspace/tf/hf_cache/hub/models--JackFram--llama-68m/snapshots/3f29b1a9c3bbac380abfb81c7063e694e25a4e0f",
+                        default="JackFram/llama-68m",
                         help="Path to drafter model")
     parser.add_argument("--large_model", type=str,
-                        default="/workspace/tf/hf_cache/hub/models--meta-llama--Llama-2-7b-hf/snapshots/01c7f73d771dfac7d292323805ebc428287df4f9",
+                        default="NousResearch/Llama-2-7b-hf",
                         help="Path to target model")
     parser.add_argument("--output_csv", type=str, default=None,
                         help="Path to output CSV (appends)")
