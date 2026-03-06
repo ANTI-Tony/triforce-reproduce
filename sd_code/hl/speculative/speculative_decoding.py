@@ -35,17 +35,15 @@ def _to_tuple_cache(cache):
         return None
     if isinstance(cache, tuple):
         return cache
-    # DynamicCache: try multiple access patterns
-    if hasattr(cache, 'key_cache') and hasattr(cache, 'value_cache') and len(cache.key_cache) > 0:
+    # Transformers 5.x: DynamicCache with .layers attribute
+    if hasattr(cache, 'layers'):
+        return tuple((layer.key_cache, layer.value_cache) for layer in cache.layers)
+    # Transformers 4.x: DynamicCache with key_cache/value_cache lists
+    if hasattr(cache, 'key_cache') and hasattr(cache, 'value_cache'):
         return tuple((k, v) for k, v in zip(cache.key_cache, cache.value_cache))
     if hasattr(cache, 'to_legacy_cache'):
         return cache.to_legacy_cache()
-    # Last resort: iterate layers
-    layers = []
-    for i in range(len(cache)):
-        k, v = cache[i]
-        layers.append((k, v))
-    return tuple(layers)
+    raise ValueError(f"Unknown cache type: {type(cache)}, attrs: {[a for a in dir(cache) if not a.startswith('_')]}")
 
 
 def _cache_seq_len(cache):
