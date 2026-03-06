@@ -57,16 +57,13 @@ def _load_longbench_qmsum(tokenizer, max_length, max_samples):
     try:
         dataset = load_dataset("THUDM/LongBench", "qmsum", split="test")
     except (RuntimeError, ValueError, FileNotFoundError):
-        # Newer datasets lib doesn't support loading scripts; download manually
-        import urllib.request, tempfile
-        url = "https://raw.githubusercontent.com/THUDM/LongBench/main/data/qmsum.jsonl"
-        tmp = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
-        urllib.request.urlretrieve(url, tmp.name)
+        # Newer datasets lib doesn't support loading scripts; use hf_hub_download
+        from huggingface_hub import hf_hub_download
+        path = hf_hub_download(repo_id="THUDM/LongBench", filename="data/qmsum.jsonl", repo_type="dataset")
         data = []
-        with open(tmp.name, 'r') as f:
+        with open(path, 'r') as f:
             for line in f:
                 data.append(json.loads(line))
-        os.unlink(tmp.name)
         dataset = data
 
     prompts = []
