@@ -56,13 +56,18 @@ def _load_longbench_qmsum(tokenizer, max_length, max_samples):
     """LongBench QMSum - meeting transcripts."""
     try:
         dataset = load_dataset("THUDM/LongBench", "qmsum", split="test")
-    except (RuntimeError, ValueError):
-        # Newer datasets lib doesn't support loading scripts; load from JSONL
-        dataset = load_dataset(
-            "json",
-            data_files="https://huggingface.co/datasets/THUDM/LongBench/resolve/main/data/qmsum.jsonl",
-            split="train",
-        )
+    except (RuntimeError, ValueError, FileNotFoundError):
+        # Newer datasets lib doesn't support loading scripts; download manually
+        import urllib.request, tempfile
+        url = "https://raw.githubusercontent.com/THUDM/LongBench/main/data/qmsum.jsonl"
+        tmp = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
+        urllib.request.urlretrieve(url, tmp.name)
+        data = []
+        with open(tmp.name, 'r') as f:
+            for line in f:
+                data.append(json.loads(line))
+        os.unlink(tmp.name)
+        dataset = data
 
     prompts = []
     for item in tqdm(dataset, desc="Tokenizing QMSum"):
