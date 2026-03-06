@@ -6,6 +6,13 @@ All prompts truncated to max_length tokens.
 
 import json
 import os
+
+# Ensure datasets cache goes to Volume Disk if available
+_vol_cache = "/workspace/tf/hf_cache/datasets"
+if os.path.isdir("/workspace/tf"):
+    os.makedirs(_vol_cache, exist_ok=True)
+    os.environ.setdefault("HF_DATASETS_CACHE", _vol_cache)
+
 from datasets import load_dataset
 from tqdm import tqdm
 
@@ -97,21 +104,32 @@ def _load_longbench_qmsum(tokenizer, max_length, max_samples):
 
 
 def _load_narrativeqa(tokenizer, max_length, max_samples):
-    """NarrativeQA - book summarization."""
-    try:
-        dataset = load_dataset("narrativeqa", split="train")
-    except Exception:
-        dataset = load_dataset("deepmind/narrativeqa", split="train")
+    """NarrativeQA - book summarization. Uses streaming to avoid full download."""
+    idx_set = {0, 50, 300, 800, 950, 1100, 2150, 2450, 2550, 2750,
+               3350, 3400, 3600, 3900, 4000, 4100, 4200, 4400, 4500, 4550}
+    max_idx = max(idx_set)
 
-    idx = [0, 50, 300, 800, 950, 1100, 2150, 2450, 2550, 2750,
-           3350, 3400, 3600, 3900, 4000, 4100, 4200, 4400, 4500, 4550]
+    # Use streaming to avoid downloading the entire dataset
+    try:
+        stream = load_dataset("deepmind/narrativeqa", split="train", streaming=True)
+    except Exception:
+        stream = load_dataset("narrativeqa", split="train", streaming=True)
+
+    # Collect items at target indices
+    collected = {}
+    for i, item in enumerate(tqdm(stream, desc="Streaming NarrativeQA", total=max_idx + 1)):
+        if i in idx_set:
+            collected[i] = item
+        if i > max_idx:
+            break
 
     prompts = []
-    for i in range(min(max_samples, len(idx))):
-        item = dataset[idx[i]]
-        # NarrativeQA has nested 'document' field with 'text'
+    for idx in sorted(idx_set):
+        if idx not in collected or len(prompts) >= max_samples:
+            continue
+        item = collected[idx]
         if isinstance(item.get('document'), dict):
-            doc_text = item['document']['text']
+            doc_text = item['document'].get('text', '')
         else:
             doc_text = item.get('document', '') or item.get('text', '')
 
