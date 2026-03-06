@@ -6,29 +6,12 @@ to sparsify a drafter model's KV cache in standard Speculative Decoding.
 
 Uses the last key vector as query proxy for chunk scoring (avoids
 extra forward passes or model-internal hooks).
+
+NOTE: All caches are expected as tuple format: tuple of (key, value) pairs.
 """
 
 import torch
-from transformers.cache_utils import DynamicCache
-from typing import Tuple, Union
-
-
-def _get_num_layers(cache):
-    if isinstance(cache, DynamicCache):
-        if hasattr(cache, 'key_cache'):
-            return len(cache.key_cache)
-        return len(cache)
-    return len(cache)
-
-
-def _get_kv(cache, layer_idx):
-    """Get (key, value) tensors from cache. Shape: [batch, heads, seq, dim]."""
-    if isinstance(cache, DynamicCache):
-        if hasattr(cache, 'key_cache'):
-            return cache.key_cache[layer_idx], cache.value_cache[layer_idx]
-        # Newer transformers: index returns (key, value) tuple
-        return cache[layer_idx]
-    return cache[layer_idx][0], cache[layer_idx][1]
+from typing import Tuple
 
 
 def _select_chunks(key, value, query, budget, chunk_size):
@@ -84,24 +67,24 @@ def _select_chunks(key, value, query, budget, chunk_size):
 
 
 def apply_triforce_sparse(
-    full_cache: Union[DynamicCache, tuple],
+    full_cache: tuple,
     budget: int,
     chunk_size: int = 8,
-) -> Tuple[Union[DynamicCache, tuple], int]:
-    """Apply TriForce sparse selection to a full KV cache.
+) -> Tuple[tuple, int]:
+    """Apply TriForce sparse selection to a full KV cache (tuple format).
 
     Uses the last key vector per layer as query proxy for chunk scoring.
 
     Args:
-        full_cache: full KV cache from drafter prefill
+        full_cache: tuple of (key, value) pairs from drafter prefill
         budget: number of KV pairs to keep
         chunk_size: chunk granularity
 
     Returns:
         (sparse_cache, original_seq_len)
     """
-    num_layers = _get_num_layers(full_cache)
-    k0, _ = _get_kv(full_cache, 0)
+    num_layers = len(full_cache)
+    k0 = full_cache[0][0]
     original_seq_len = k0.shape[2]
 
     if budget >= original_seq_len:
@@ -112,28 +95,11 @@ def apply_triforce_sparse(
     if eff_budget == 0:
         eff_budget = chunk_size
 
-    is_dynamic = isinstance(full_cache, DynamicCache)
+    layers = []
+    for i in range(num_layers):
+        k, v = full_cache[i][0], full_cache[i][1]
+        q_proxy = k[:, :, -1:, :]
+        sk, sv = _select_chunks(k, v, q_proxy, eff_budget, chunk_size)
+        layers.append((sk, sv))
 
-    if is_dynamic:
-        sparse = DynamicCache()
-        for i in range(num_layers):
-            k, v = _get_kv(full_cache, i)
-            q_proxy = k[:, :, -1:, :]          # last key as query
-            sk, sv = _select_chunks(k, v, q_proxy, eff_budget, chunk_size)
-            if hasattr(sparse, 'key_cache'):
-                sparse.key_cache.append(sk)
-                sparse.value_cache.append(sv)
-            else:
-                sparse.update(sk, sv, i)
-        if hasattr(sparse, '_seen_tokens'):
-            sparse._seen_tokens = eff_budget
-    else:
-        layers = []
-        for i in range(num_layers):
-            k, v = full_cache[i][0], full_cache[i][1]
-            q_proxy = k[:, :, -1:, :]
-            sk, sv = _select_chunks(k, v, q_proxy, eff_budget, chunk_size)
-            layers.append((sk, sv))
-        sparse = tuple(layers)
-
-    return sparse, original_seq_len
+    return tuple(layers), original_seq_len

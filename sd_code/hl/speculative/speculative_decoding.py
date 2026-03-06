@@ -11,7 +11,6 @@ sys.path.append(os.path.join(current_dir, "speculative"))
 import torch
 from torch.nn import Module
 from logits_processor import LogitsProcessor, GreedyProcessor, MultinomialProcessor
-from transformers.cache_utils import DynamicCache
 from caching import prune_cache
 from sparse_cache import apply_triforce_sparse
 import printing as printing
@@ -30,15 +29,27 @@ def max_fn(x: torch.Tensor) -> torch.Tensor:
     return x_max / x_max_sum
 
 
+def _to_tuple_cache(cache):
+    """Convert any cache format to tuple of (key, value) pairs."""
+    if cache is None:
+        return None
+    if isinstance(cache, tuple):
+        return cache
+    # DynamicCache: try multiple access patterns
+    if hasattr(cache, 'key_cache') and hasattr(cache, 'value_cache') and len(cache.key_cache) > 0:
+        return tuple((k, v) for k, v in zip(cache.key_cache, cache.value_cache))
+    if hasattr(cache, 'to_legacy_cache'):
+        return cache.to_legacy_cache()
+    # Last resort: iterate layers
+    layers = []
+    for i in range(len(cache)):
+        k, v = cache[i]
+        layers.append((k, v))
+    return tuple(layers)
+
+
 def _cache_seq_len(cache):
-    """Get sequence length from either DynamicCache or tuple cache."""
-    if isinstance(cache, DynamicCache):
-        if hasattr(cache, 'key_cache') and len(cache.key_cache) > 0:
-            return cache.key_cache[0].shape[2]
-        # Newer transformers: use get_seq_length()
-        return cache.get_seq_length()
-    if hasattr(cache, 'get_seq_length'):
-        return cache.get_seq_length()
+    """Get sequence length from tuple cache."""
     return cache[0][0].size(-2)
 
 
@@ -117,7 +128,7 @@ def speculative_generate(
             past_key_values=target_cache,
             use_cache=use_cache,
         )
-        target_cache = Mp.past_key_values
+        target_cache = _to_tuple_cache(Mp.past_key_values)
 
         if use_greedy_sampler:
             t = torch.argmax(Mp.logits[..., -1, :], dim = -1)
@@ -141,7 +152,7 @@ def speculative_generate(
                 past_key_values=drafter_cache,
                 use_cache=use_cache,
             )
-        drafter_cache = Mq.past_key_values
+        drafter_cache = _to_tuple_cache(Mq.past_key_values)
 
         # Apply sparse selection to drafter cache
         if use_sparse:
@@ -178,7 +189,7 @@ def speculative_generate(
                 use_cache=use_cache,
                 position_ids=position_ids,
             )
-            drafter_cache = Mq.past_key_values
+            drafter_cache = _to_tuple_cache(Mq.past_key_values)
 
             if use_greedy_sampler:
                 xi = t = torch.argmax(Mq.logits, dim = -1)
@@ -199,7 +210,7 @@ def speculative_generate(
             past_key_values=target_cache,
             use_cache=use_cache,
         )
-        target_cache = Mp.past_key_values
+        target_cache = _to_tuple_cache(Mp.past_key_values)
         target_logits = Mp.logits
 
         # rejection sampling
@@ -257,7 +268,7 @@ def speculative_generate(
                 use_cache=use_cache,
                 position_ids=position_ids,
             )
-            drafter_cache = Mq.past_key_values
+            drafter_cache = _to_tuple_cache(Mq.past_key_values)
 
         if debug:
             generated = input_ids.clone().detach()
