@@ -24,7 +24,7 @@ echo ""
 # 2. Install dependencies
 echo "[Step 2/4] Installing Python dependencies ..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate datasets tqdm
+pip install transformers accelerate datasets tqdm termcolor
 echo ""
 
 # 3. Download models (Llama-2-7b-hf + llama-68m)
