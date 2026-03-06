@@ -57,11 +57,26 @@ def _load_longbench_qmsum(tokenizer, max_length, max_samples):
     try:
         dataset = load_dataset("THUDM/LongBench", "qmsum", split="test")
     except (RuntimeError, ValueError, FileNotFoundError):
-        # Newer datasets lib doesn't support loading scripts; use hf_hub_download
+        # Newer datasets lib doesn't support loading scripts
+        # Download data.zip and extract qmsum.jsonl
         from huggingface_hub import hf_hub_download
-        path = hf_hub_download(repo_id="THUDM/LongBench", filename="data/qmsum.jsonl", repo_type="dataset")
+        import zipfile
+        zip_path = hf_hub_download(repo_id="THUDM/LongBench", filename="data.zip", repo_type="dataset")
+        extract_dir = os.path.join(os.path.dirname(zip_path), "longbench_extracted")
+        if not os.path.exists(os.path.join(extract_dir, "qmsum.jsonl")):
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                zf.extractall(extract_dir)
+        # Find qmsum.jsonl (might be in a subdirectory)
+        qmsum_path = None
+        for root, dirs, files in os.walk(extract_dir):
+            for f in files:
+                if f == "qmsum.jsonl":
+                    qmsum_path = os.path.join(root, f)
+                    break
+        if qmsum_path is None:
+            raise FileNotFoundError(f"qmsum.jsonl not found in {extract_dir}")
         data = []
-        with open(path, 'r') as f:
+        with open(qmsum_path, 'r') as f:
             for line in f:
                 data.append(json.loads(line))
         dataset = data
