@@ -94,8 +94,7 @@ def speculative_generate(
 
     # prepare input tensor
     prompt_len = len(inputs)
-    max_seq_length = target.config.max_position_embeddings if hasattr(target.config, 'max_position_embeddings') else (target.config.max_context_length if hasattr(target.config, 'max_context_length') else 1024)
-    total_len = min(max_seq_length, prompt_len + max_gen_len)
+    total_len = prompt_len + max_gen_len
     input_ids = torch.full((1, total_len), pad_token_id, dtype=torch.long, device=target.device)
     input_ids[0, :prompt_len] = torch.tensor(inputs, dtype=torch.long, device=target.device)
 
