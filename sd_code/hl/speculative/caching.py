@@ -71,9 +71,20 @@ def prune_dynamic_cache(cache: DynamicCache, num_tokens_to_discard: int):
     if cache is None:
         return None
 
-    for layer in range(len(cache)):
-        cache.key_cache[layer] = cache.key_cache[layer][:, :, :-num_tokens_to_discard, :]
-        cache.value_cache[layer] = cache.value_cache[layer][:, :, :-num_tokens_to_discard, :]
-    cache._seen_tokens -= num_tokens_to_discard
+    if hasattr(cache, 'key_cache'):
+        for layer in range(len(cache.key_cache)):
+            cache.key_cache[layer] = cache.key_cache[layer][:, :, :-num_tokens_to_discard, :]
+            cache.value_cache[layer] = cache.value_cache[layer][:, :, :-num_tokens_to_discard, :]
+    else:
+        # Newer transformers DynamicCache
+        for layer in range(len(cache)):
+            k, v = cache[layer]
+            cache.update(
+                k[:, :, :-num_tokens_to_discard, :],
+                v[:, :, :-num_tokens_to_discard, :],
+                layer,
+            )
+    if hasattr(cache, '_seen_tokens'):
+        cache._seen_tokens -= num_tokens_to_discard
 
     return cache

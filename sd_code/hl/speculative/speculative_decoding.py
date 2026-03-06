@@ -33,7 +33,12 @@ def max_fn(x: torch.Tensor) -> torch.Tensor:
 def _cache_seq_len(cache):
     """Get sequence length from either DynamicCache or tuple cache."""
     if isinstance(cache, DynamicCache):
-        return cache.key_cache[0].shape[2]
+        if hasattr(cache, 'key_cache') and len(cache.key_cache) > 0:
+            return cache.key_cache[0].shape[2]
+        # Newer transformers: use get_seq_length()
+        return cache.get_seq_length()
+    if hasattr(cache, 'get_seq_length'):
+        return cache.get_seq_length()
     return cache[0][0].size(-2)
 
 

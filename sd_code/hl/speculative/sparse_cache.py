@@ -15,14 +15,19 @@ from typing import Tuple, Union
 
 def _get_num_layers(cache):
     if isinstance(cache, DynamicCache):
-        return len(cache.key_cache)
+        if hasattr(cache, 'key_cache'):
+            return len(cache.key_cache)
+        return len(cache)
     return len(cache)
 
 
 def _get_kv(cache, layer_idx):
     """Get (key, value) tensors from cache. Shape: [batch, heads, seq, dim]."""
     if isinstance(cache, DynamicCache):
-        return cache.key_cache[layer_idx], cache.value_cache[layer_idx]
+        if hasattr(cache, 'key_cache'):
+            return cache.key_cache[layer_idx], cache.value_cache[layer_idx]
+        # Newer transformers: index returns (key, value) tuple
+        return cache[layer_idx]
     return cache[layer_idx][0], cache[layer_idx][1]
 
 
@@ -112,12 +117,16 @@ def apply_triforce_sparse(
     if is_dynamic:
         sparse = DynamicCache()
         for i in range(num_layers):
-            k, v = full_cache.key_cache[i], full_cache.value_cache[i]
+            k, v = _get_kv(full_cache, i)
             q_proxy = k[:, :, -1:, :]          # last key as query
             sk, sv = _select_chunks(k, v, q_proxy, eff_budget, chunk_size)
-            sparse.key_cache.append(sk)
-            sparse.value_cache.append(sv)
-        sparse._seen_tokens = eff_budget
+            if hasattr(sparse, 'key_cache'):
+                sparse.key_cache.append(sk)
+                sparse.value_cache.append(sv)
+            else:
+                sparse.update(sk, sv, i)
+        if hasattr(sparse, '_seen_tokens'):
+            sparse._seen_tokens = eff_budget
     else:
         layers = []
         for i in range(num_layers):
