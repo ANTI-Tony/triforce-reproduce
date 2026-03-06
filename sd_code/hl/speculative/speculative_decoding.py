@@ -37,7 +37,7 @@ def _to_tuple_cache(cache):
         return cache
     # Transformers 5.x: DynamicCache with .layers attribute
     if hasattr(cache, 'layers'):
-        return tuple((layer.key_cache, layer.value_cache) for layer in cache.layers)
+        return tuple((layer.keys, layer.values) for layer in cache.layers)
     # Transformers 4.x: DynamicCache with key_cache/value_cache lists
     if hasattr(cache, 'key_cache') and hasattr(cache, 'value_cache'):
         return tuple((k, v) for k, v in zip(cache.key_cache, cache.value_cache))
