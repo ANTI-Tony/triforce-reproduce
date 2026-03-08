@@ -143,3 +143,44 @@ PYEOF
 else
     echo "[INFO] dataset.py already patched"
 fi
+
+# --- Patch 3: cache.py - debug update_graph_cache for short context ---
+CACHE="$TRIFORCE_DIR/models/cache.py"
+if ! grep -q "DEBUG update_graph_cache" "$CACHE"; then
+    cp "$CACHE" "$CACHE.bak"
+    python3 -c "
+with open('$CACHE', 'r') as f:
+    content = f.read()
+
+# Patch RetrievalCache.update_graph_cache (single-GPU version, first occurrence)
+old = '''    def update_graph_cache(self, kv_cache=None):
+        self.value_cache[:,:,self.max_budget-(kv_cache.seq_len-self.prefill):self.max_budget] = kv_cache.value_cache[:,:, self.prefill:kv_cache.seq_len].clone()
+        self.key_cache[:,:,self.max_budget-(kv_cache.seq_len-self.prefill):self.max_budget] = kv_cache.key_cache[:,:, self.prefill:kv_cache.seq_len].clone()
+
+    def update(self, new_k_cache'''
+
+new = '''    def update_graph_cache(self, kv_cache=None):
+        delta = kv_cache.seq_len - self.prefill
+        print(f'[DEBUG update_graph_cache] max_budget={self.max_budget} prefill={self.prefill} seq_len={kv_cache.seq_len} delta={delta}')
+        print(f'[DEBUG] self.value_cache.shape={list(self.value_cache.shape)} kv.value_cache.shape={list(kv_cache.value_cache.shape)}')
+        if delta <= 0:
+            print('[DEBUG] delta<=0, skipping update')
+            return
+        if delta > self.max_budget:
+            src_start = kv_cache.seq_len - self.max_budget
+            delta = self.max_budget
+        else:
+            src_start = self.prefill
+        self.value_cache[:,:,self.max_budget-delta:self.max_budget] = kv_cache.value_cache[:,:, src_start:kv_cache.seq_len].clone()
+        self.key_cache[:,:,self.max_budget-delta:self.max_budget] = kv_cache.key_cache[:,:, src_start:kv_cache.seq_len].clone()
+
+    def update(self, new_k_cache'''
+
+content = content.replace(old, new, 1)
+with open('$CACHE', 'w') as f:
+    f.write(content)
+print('[INFO] Patched cache.py (debug + safe update_graph_cache)')
+"
+else
+    echo "[INFO] cache.py already patched"
+fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run TriForce experiment on all three datasets with multiple budgets
 # Context: 3840 tokens, total: 4096 (3840 + 256 gen)
-# Budgets: 4096 (full cache), 2048, 1024, 512, 256
+# Budgets: 3840 (full cache = prefill), 2048, 1024, 512, 256
 # Usage: cd /workspace/tf/triforce-reproduce/vendor/TriForce && bash ../../run_all_datasets.sh
 set -euo pipefail
 
@@ -17,7 +17,7 @@ CSV="$RESULTS_DIR/all_results.csv"
 echo "dataset,budget,baseline_ms,acceptance,triforce_ms,speedup" > "$CSV"
 
 DATASETS=("gs" "longbench_packed_qmsum" "lwm")
-BUDGETS=(4096 2048 1024 512 256)
+BUDGETS=(3840 2048 1024 512 256)
 
 for DS in "${DATASETS[@]}"; do
   for BUDGET in "${BUDGETS[@]}"; do
