@@ -8,7 +8,7 @@ export TRANSFORMERS_CACHE=/workspace/tf/hf_cache
 export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
 
 # Auto-detect model paths
-LARGE_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('NousResearch/Llama-2-7b-hf', local_files_only=True))")
+LARGE_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('NousResearch/Yarn-Llama-2-7b-128k', local_files_only=True))")
 SMALL_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('JackFram/llama-68m', local_files_only=True))")
 
 echo "========================================="

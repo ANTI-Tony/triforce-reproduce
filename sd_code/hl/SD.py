@@ -55,7 +55,7 @@ def parse_args():
                         default="JackFram/llama-68m",
                         help="Path to drafter model")
     parser.add_argument("--large_model", type=str,
-                        default="NousResearch/Llama-2-7b-hf",
+                        default="NousResearch/Yarn-Llama-2-7b-128k",
                         help="Path to target model")
     parser.add_argument("--output_csv", type=str, default=None,
                         help="Path to output CSV (appends)")
