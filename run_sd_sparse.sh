@@ -9,7 +9,8 @@ export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
 
 # Yarn-Llama-2-7b-128k needs transformers>=4.38 for yarn rope_scaling support
 # (TriForce uses custom modeling_llama.py so it works with 4.36, but SD uses standard HF)
-pip install 'transformers>=4.40' -q
+# Cap at <4.45 to stay compatible with PyTorch 2.2.x
+pip install 'transformers>=4.38,<4.45' -q
 
 # Auto-detect model paths
 LARGE_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('NousResearch/Yarn-Llama-2-7b-128k', local_files_only=True))")
