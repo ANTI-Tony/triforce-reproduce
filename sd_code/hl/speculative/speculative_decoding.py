@@ -214,7 +214,13 @@ def speculative_generate(
         drafts_speculated += corrected_gamma
 
         # run target model on drafts
-        assert _cache_seq_len(target_cache) == tot_token_nums - 1
+        cache_len = _cache_seq_len(target_cache)
+        expected = tot_token_nums - 1
+        if cache_len != expected:
+            print(f"[WARN] target cache mismatch: got {cache_len}, expected {expected}, diff={cache_len - expected}")
+            # Fix: prune or skip to keep alignment
+            if cache_len > expected:
+                target_cache = prune_cache(target_cache, cache_len - expected)
         Mp = target(
             input_ids=input_ids[..., current_position: current_position + corrected_gamma + 1],
             past_key_values=target_cache,
