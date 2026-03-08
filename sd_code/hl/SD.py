@@ -199,9 +199,10 @@ def main():
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = 'left'
 
-    # Load prompts (truncated to max_length = 4096)
-    print(f"Loading dataset: {args.dataset} (prompt truncated to {args.max_length} tokens)...")
-    prompts = load_prompts(args.dataset, tokenizer, args.max_length, args.max_samples)
+    # Load prompts: truncate to max_length - max_new_tokens so total stays within 4096
+    prompt_max_len = args.max_length - args.max_new_tokens
+    print(f"Loading dataset: {args.dataset} (prompt truncated to {prompt_max_len} tokens, total max {args.max_length})...")
+    prompts = load_prompts(args.dataset, tokenizer, prompt_max_len, args.max_samples)
     print(f"Loaded {len(prompts)} prompts")
     print()
 
