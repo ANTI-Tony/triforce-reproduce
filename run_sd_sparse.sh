@@ -26,7 +26,7 @@ SD_DIR="sd_code/hl"
 
 DATASETS=("gs" "longbench_packed_qmsum" "lwm")
 # budget=0 = full cache SD (also runs AR baseline); others = sparse
-BUDGETS=(0 256 512 1024 2048)
+BUDGETS=(0 512 1024 2048)
 
 for DS in "${DATASETS[@]}"; do
     echo ""
