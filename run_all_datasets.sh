@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Run TriForce experiment on all three datasets and collect results
+# Run TriForce experiment on all three datasets with multiple budgets
+# Context: 3840 tokens, total: 4096 (3840 + 256 gen)
+# Budgets: 4096 (full cache), 2048, 1024, 512, 256
 # Usage: cd /workspace/tf/triforce-reproduce/vendor/TriForce && bash ../../run_all_datasets.sh
 set -euo pipefail
 
@@ -12,23 +14,25 @@ RESULTS_DIR="/workspace/tf/triforce-reproduce/results"
 mkdir -p "$RESULTS_DIR"
 CSV="$RESULTS_DIR/all_results.csv"
 
-echo "dataset,log_file,baseline_ms,acceptance,triforce_ms,speedup" > "$CSV"
+echo "dataset,budget,baseline_ms,acceptance,triforce_ms,speedup" > "$CSV"
 
 DATASETS=("gs" "longbench_packed_qmsum" "lwm")
+BUDGETS=(4096 2048 1024 512 256)
 
 for DS in "${DATASETS[@]}"; do
+  for BUDGET in "${BUDGETS[@]}"; do
     echo ""
     echo "========================================="
-    echo "  Running dataset: $DS"
+    echo "  Dataset: $DS | Budget: $BUDGET"
     echo "========================================="
     echo ""
 
-    LOG="$RESULTS_DIR/${DS}.log"
+    LOG="$RESULTS_DIR/${DS}_budget${BUDGET}.log"
 
     python test/on_chip.py \
-        --prefill 124928 \
+        --prefill 3840 \
         --gen_len 256 \
-        --budget 4096 \
+        --budget "$BUDGET" \
         --chunk_size 8 \
         --draft_cache_budget 256 \
         --gamma 6 \
@@ -38,16 +42,17 @@ for DS in "${DATASETS[@]}"; do
         2>&1 | tee "$LOG"
 
     # Parse results from log
-    BASELINE=$(grep -oP 'average latency: \K[0-9.]+' "$LOG" | head -1)
-    ACCEPTANCE=$(grep -oP 'acceptance rate \(NOT per token\): \K[0-9.]+' "$LOG")
-    TRIFORCE=$(grep -oP '\[TriForce\] average latency: \K[0-9.]+' "$LOG")
-    SPEEDUP=$(grep -oP '\[E2E Speedup\]: \K[0-9.]+' "$LOG")
+    BASELINE=$(grep -oP 'average latency: \K[0-9.]+' "$LOG" | head -1 || echo "N/A")
+    ACCEPTANCE=$(grep -oP 'acceptance rate \(NOT per token\): \K[0-9.]+' "$LOG" || echo "N/A")
+    TRIFORCE=$(grep -oP '\[TriForce\] average latency: \K[0-9.]+' "$LOG" || echo "N/A")
+    SPEEDUP=$(grep -oP '\[E2E Speedup\]: \K[0-9.]+' "$LOG" || echo "N/A")
 
-    echo "$DS,${DS}.log,$BASELINE,$ACCEPTANCE,$TRIFORCE,$SPEEDUP" >> "$CSV"
+    echo "$DS,$BUDGET,$BASELINE,$ACCEPTANCE,$TRIFORCE,$SPEEDUP" >> "$CSV"
 
     echo ""
-    echo "[DONE] $DS: baseline=${BASELINE}ms, triforce=${TRIFORCE}ms, speedup=${SPEEDUP}x, acceptance=${ACCEPTANCE}"
+    echo "[DONE] $DS budget=$BUDGET: baseline=${BASELINE}ms, triforce=${TRIFORCE}ms, speedup=${SPEEDUP}x, acceptance=${ACCEPTANCE}"
     echo ""
+  done
 done
 
 echo ""
