@@ -57,9 +57,9 @@ def _num_layers(cache):
 
 
 def _cache_seq_len(cache):
-    if hasattr(cache, 'get_seq_length'):
-        return cache.get_seq_length()
-    return cache[0][0].size(-2)
+    """Get actual cache sequence length from tensor shape (not _seen_tokens)."""
+    k, _ = _get_layer_kv(cache, 0)
+    return k.shape[-2]
 
 
 def prune_cache(cache, num_tokens_to_discard):
@@ -70,6 +70,9 @@ def prune_cache(cache, num_tokens_to_discard):
     for i in range(n_layers):
         k, v = _get_layer_kv(cache, i)
         _set_layer_kv(cache, i, k[:, :, :-num_tokens_to_discard, :], v[:, :, :-num_tokens_to_discard, :])
+    # Keep _seen_tokens in sync so model computes correct position_ids
+    if hasattr(cache, '_seen_tokens'):
+        cache._seen_tokens -= num_tokens_to_discard
     return cache
 
 
