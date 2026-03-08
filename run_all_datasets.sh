@@ -35,7 +35,7 @@ for DS in "${DATASETS[@]}"; do
         --budget "$BUDGET" \
         --chunk_size 8 \
         --draft_cache_budget 256 \
-        --gamma 6 \
+        --gamma 3 \
         --top_p 0.9 \
         --temp 0.6 \
         --dataset "$DS" \
