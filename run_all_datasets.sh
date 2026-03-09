@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run TriForce experiment on all three datasets with multiple budgets
-# Context: 3840 tokens, total: 4096 (3840 + 256 gen)
+# Context: 124928 tokens (122k), total: 125184 (124928 + 256 gen)
 # Budgets: 2048, 1024, 512
 # Usage: cd /workspace/tf/triforce-reproduce/vendor/TriForce && bash ../../run_all_datasets.sh
 set -euo pipefail
@@ -30,7 +30,7 @@ for DS in "${DATASETS[@]}"; do
     LOG="$RESULTS_DIR/${DS}_budget${BUDGET}.log"
 
     python test/on_chip.py \
-        --prefill 3840 \
+        --prefill 124928 \
         --gen_len 256 \
         --budget "$BUDGET" \
         --chunk_size 8 \

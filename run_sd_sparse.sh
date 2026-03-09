@@ -54,7 +54,7 @@ for DS in "${DATASETS[@]}"; do
             --dataset "$DS" \
             --budget "$BUDGET" \
             --chunk_size 8 \
-            --max_length 4096 \
+            --max_length 125184 \
             --max_new_tokens 256 \
             --gamma 3 \
             --max_samples 20 \
