@@ -43,12 +43,17 @@ for DS in "${DATASETS[@]}"; do
         echo ""
         echo "--- $DS | Budget: $BUDGET ---"
         LOG="$RESULTS_DIR/${DS}_budget${BUDGET}.log"
+        MEM_LOG="/tmp/gpu_mem_sd_${DS}_${BUDGET}.log"
 
         # Only run AR baseline for budget=0 (full cache), skip for sparse runs
         EXTRA_ARGS=""
         if [ "$BUDGET" -ne 0 ]; then
             EXTRA_ARGS="--skip_baseline"
         fi
+
+        # Start background GPU memory sampling (every 1s)
+        nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -l 1 > "$MEM_LOG" 2>/dev/null &
+        MEM_PID=$!
 
         python3 "$SD_DIR/SD.py" \
             --dataset "$DS" \
@@ -65,7 +70,12 @@ for DS in "${DATASETS[@]}"; do
             $EXTRA_ARGS \
             2>&1 | tee "$LOG"
 
-        echo "[DONE] $DS budget=$BUDGET"
+        # Stop memory monitor and get peak
+        kill $MEM_PID 2>/dev/null || true
+        sleep 0.5
+        PEAK_MEM=$(sort -n "$MEM_LOG" | tail -1 || echo "N/A")
+
+        echo "[DONE] $DS budget=$BUDGET peak_gpu=${PEAK_MEM}MB"
     done
 done
 

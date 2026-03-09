@@ -254,6 +254,9 @@ def main():
     results['acc_rate'] = acc_rate
     results['speedup'] = speedup
 
+    # Peak GPU memory
+    peak_gpu_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+
     # Print summary
     print(f"\n{'='*50}")
     print(f"Dataset: {args.dataset}")
@@ -262,6 +265,7 @@ def main():
     print(f"SD:       {sd_ms:.2f} ms/token")
     print(f"Speedup:  {speedup:.3f}x")
     print(f"Accept:   {acc_rate:.3f}")
+    print(f"Peak GPU: {peak_gpu_mb:.0f} MB")
     print(f"{'='*50}")
 
     # Append to CSV
@@ -270,13 +274,14 @@ def main():
         with open(args.output_csv, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['dataset', 'budget', 'baseline_ms', 'sd_ms', 'speedup', 'acceptance_rate'])
+                writer.writerow(['dataset', 'budget', 'baseline_ms', 'sd_ms', 'speedup', 'acceptance_rate', 'peak_gpu_mb'])
             writer.writerow([
                 args.dataset, args.budget,
                 f"{results['baseline_ms']:.2f}",
                 f"{sd_ms:.2f}",
                 f"{speedup:.3f}",
-                f"{acc_rate:.3f}"
+                f"{acc_rate:.3f}",
+                f"{peak_gpu_mb:.0f}"
             ])
         print(f"Results appended to {args.output_csv}")
 
