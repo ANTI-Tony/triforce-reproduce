@@ -192,13 +192,24 @@ def speculative_generate(
         if debug:
             printing.initial_step(t, tokenizer)
 
-        # Drafter prefill
-        Mq = drafter(
-                input_ids=input_ids[..., :prompt_len],
-                past_key_values=drafter_cache,
-                use_cache=use_cache,
-            )
-        drafter_cache = Mq.past_key_values
+        # Drafter prefill (chunked for long context to avoid activation OOM)
+        if use_static_target:
+            for start_pos in range(0, prompt_len, prefill_chunk):
+                end_pos = min(start_pos + prefill_chunk, prompt_len)
+                Mq = drafter(
+                    input_ids=input_ids[:, start_pos:end_pos],
+                    past_key_values=drafter_cache,
+                    use_cache=use_cache,
+                )
+                drafter_cache = Mq.past_key_values
+                del Mq
+        else:
+            Mq = drafter(
+                    input_ids=input_ids[..., :prompt_len],
+                    past_key_values=drafter_cache,
+                    use_cache=use_cache,
+                )
+            drafter_cache = Mq.past_key_values
 
         # Apply sparse selection to drafter cache
         if use_sparse:
