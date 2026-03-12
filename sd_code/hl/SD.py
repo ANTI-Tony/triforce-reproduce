@@ -275,9 +275,9 @@ def main():
         with open(args.output_csv, 'a', newline='') as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(['dataset', 'budget', 'baseline_ms', 'sd_ms', 'speedup', 'acceptance_rate', 'peak_gpu_mb'])
+                writer.writerow(['dataset', 'budget', 'gamma', 'max_length', 'baseline_ms', 'sd_ms', 'speedup', 'acceptance_rate', 'peak_gpu_mb'])
             writer.writerow([
-                args.dataset, args.budget,
+                args.dataset, args.budget, args.gamma, args.max_length,
                 f"{results['baseline_ms']:.2f}",
                 f"{sd_ms:.2f}",
                 f"{speedup:.3f}",
