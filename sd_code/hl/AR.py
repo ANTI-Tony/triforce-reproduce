@@ -33,7 +33,8 @@ class LlamaBenchmark(Benchmark):
         self.model = AutoModelForCausalLM.from_pretrained(
             model_dir,
             torch_dtype=torch.float16,
-            device_map='auto'
+            device_map='auto',
+            attn_implementation="flash_attention_2"
         )
         self.model.eval()
 

@@ -20,6 +20,8 @@ mkdir -p /workspace/tf/hf_cache
 
 pip install accelerate datasets sentencepiece protobuf tqdm termcolor huggingface_hub -q
 pip install 'transformers>=4.38,<4.45' -q
+pip install flash-attn --no-build-isolation -q
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "[Step 0] Downloading models..."
 python3 -c "

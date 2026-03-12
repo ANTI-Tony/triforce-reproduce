@@ -8,6 +8,8 @@ export TRANSFORMERS_CACHE=/workspace/tf/hf_cache
 export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
 
 pip install 'transformers>=4.38,<4.45' -q
+pip install flash-attn --no-build-isolation -q
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('NousResearch/Yarn-Llama-2-7b-128k', local_files_only=True))")
 
