@@ -210,7 +210,7 @@ def main():
     print("Loading target model (Yarn-Llama-2-7b-128k, fp16)...")
     target = AutoModelForCausalLM.from_pretrained(
         args.large_model, torch_dtype=torch.float16, device_map='cuda:0',
-        attn_implementation="flash_attention_2"
+        attn_implementation="sdpa"
     ).eval()
 
     print("Loading drafter model (llama-68m, fp32)...")

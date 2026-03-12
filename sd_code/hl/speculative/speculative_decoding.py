@@ -11,7 +11,7 @@ sys.path.append(os.path.join(current_dir, "speculative"))
 import torch
 from torch.nn import Module
 from logits_processor import LogitsProcessor, GreedyProcessor, MultinomialProcessor
-from transformers.cache_utils import DynamicCache
+from transformers.cache_utils import DynamicCache, StaticCache
 from sparse_cache import apply_triforce_sparse
 import printing as printing
 from typing import List, Tuple, Optional
@@ -131,20 +131,54 @@ def speculative_generate(
     use_sparse = sparse_budget is not None and sparse_budget < prompt_len
     drafter_pos_offset = 0
 
-    if first_target:
-        # Target prefill
-        Mp = target(
-            input_ids=input_ids[..., :tot_token_nums],
-            past_key_values=target_cache,
-            use_cache=use_cache,
-        )
-        target_cache = Mp.past_key_values
+    # Use StaticCache for target when prompt is long to avoid OOM
+    use_static_target = prompt_len > 4096
+    prefill_chunk = 1024
 
-        if use_greedy_sampler:
-            t = torch.argmax(Mp.logits[..., -1, :], dim = -1)
+    if first_target:
+        if use_static_target:
+            # StaticCache + chunked prefill for long context
+            target_cache = StaticCache(
+                config=target.config,
+                max_batch_size=1,
+                max_cache_len=total_len + gamma + 2,
+                device=target.device,
+                dtype=torch.float16,
+            )
+            last_logits = None
+            for start_pos in range(0, prompt_len, prefill_chunk):
+                end_pos = min(start_pos + prefill_chunk, prompt_len)
+                cache_positions = torch.arange(start_pos, end_pos, device=target.device)
+                out = target(
+                    input_ids=input_ids[:, start_pos:end_pos],
+                    past_key_values=target_cache,
+                    use_cache=True,
+                    cache_position=cache_positions,
+                )
+                last_logits = out.logits[:, -1:, :]
+                del out
+
+            if use_greedy_sampler:
+                t = torch.argmax(last_logits.squeeze(1), dim=-1)
+            else:
+                p_p = logits_processor(last_logits.squeeze(1))
+                t = logits_processor.sample(p_p)
+            del last_logits
         else:
-            p_p = logits_processor(Mp.logits[..., -1, :])
-            t = logits_processor.sample(p_p)
+            # DynamicCache + single-shot prefill for short context
+            Mp = target(
+                input_ids=input_ids[..., :tot_token_nums],
+                past_key_values=target_cache,
+                use_cache=use_cache,
+            )
+            target_cache = Mp.past_key_values
+
+            if use_greedy_sampler:
+                t = torch.argmax(Mp.logits[..., -1, :], dim=-1)
+            else:
+                p_p = logits_processor(Mp.logits[..., -1, :])
+                t = logits_processor.sample(p_p)
+
         input_ids[0, tot_token_nums] = t
         tot_token_nums += 1
 
@@ -213,17 +247,30 @@ def speculative_generate(
 
         drafts_speculated += corrected_gamma
 
-        # run target model on drafts — auto-fix cache alignment
-        cache_len = _cache_seq_len(target_cache)
-        expected = tot_token_nums - 1
-        if cache_len > expected:
-            target_cache = prune_cache(target_cache, cache_len - expected)
-        Mp = target(
-            input_ids=input_ids[..., current_position: current_position + corrected_gamma + 1],
-            past_key_values=target_cache,
-            use_cache=use_cache,
-        )
-        target_cache = Mp.past_key_values
+        # run target model on drafts
+        if use_static_target:
+            cache_positions = torch.arange(
+                current_position, current_position + corrected_gamma + 1,
+                device=target.device
+            )
+            Mp = target(
+                input_ids=input_ids[..., current_position: current_position + corrected_gamma + 1],
+                past_key_values=target_cache,
+                use_cache=True,
+                cache_position=cache_positions,
+            )
+        else:
+            # DynamicCache: auto-fix cache alignment
+            cache_len = _cache_seq_len(target_cache)
+            expected = tot_token_nums - 1
+            if cache_len > expected:
+                target_cache = prune_cache(target_cache, cache_len - expected)
+            Mp = target(
+                input_ids=input_ids[..., current_position: current_position + corrected_gamma + 1],
+                past_key_values=target_cache,
+                use_cache=use_cache,
+            )
+            target_cache = Mp.past_key_values
         target_logits = Mp.logits
 
         # rejection sampling
@@ -266,7 +313,8 @@ def speculative_generate(
             # prune the cache
             if use_cache:
                 drafter_cache = prune_cache(drafter_cache, corrected_gamma - n - 1)
-                target_cache = prune_cache(target_cache, corrected_gamma - n)
+                if not use_static_target:
+                    target_cache = prune_cache(target_cache, corrected_gamma - n)
         else:
             # all drafts accepted: supplement drafter cache
             if use_sparse:
