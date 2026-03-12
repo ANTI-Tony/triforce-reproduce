@@ -38,37 +38,53 @@ class LlamaBenchmark(Benchmark):
         )
         self.model.eval()
 
-    def generate_text(self, prompts, max_new_tokens=256, batch_size=1):
+    def generate_text(self, prompts, max_new_tokens=256, batch_size=1, prefill_chunk=4096):
+        """AR generation with chunked prefill to avoid OOM on long contexts."""
         total_new_tokens = 0
-
         times = []
+        eos_id = self.tokenizer.eos_token_id
+
         for i in tqdm(range(0, len(prompts), batch_size), desc="AR Generating"):
-            batch_prompts = prompts[i]
+            text = prompts[i]
+            input_ids = self.tokenizer.encode(text, return_tensors='pt').to(self.model.device)
+            prompt_len = input_ids.shape[1]
 
             torch.cuda.synchronize()
             start_time = time.time()
-            inputs = self.tokenizer(
-                batch_prompts, return_tensors='pt', truncation=True, padding=True
-            ).to(self.model.device)
-            input_lengths = [seq.shape[0] for seq in inputs.input_ids]
 
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_new_tokens=max_new_tokens,
-                    num_return_sequences=1,
-                    do_sample=False,
-                    temperature=0.0
-                )
+                # Chunked prefill: process prompt in chunks to limit activation memory
+                past = None
+                for start in range(0, prompt_len, prefill_chunk):
+                    end = min(start + prefill_chunk, prompt_len)
+                    out = self.model(
+                        input_ids=input_ids[:, start:end],
+                        past_key_values=past,
+                        use_cache=True
+                    )
+                    past = out.past_key_values
+
+                # First new token from last prefill logits
+                next_token = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
+                new_tokens = 1
+
+                # Autoregressive decode
+                for _ in range(max_new_tokens - 1):
+                    out = self.model(
+                        input_ids=next_token,
+                        past_key_values=past,
+                        use_cache=True
+                    )
+                    past = out.past_key_values
+                    next_token = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
+                    new_tokens += 1
+                    if next_token.item() == eos_id:
+                        break
+
             torch.cuda.synchronize()
             end_time = time.time()
             times.append(end_time - start_time)
-
-            for prompt, output in zip(batch_prompts, outputs):
-                generated_text = self.tokenizer.decode(output, skip_special_tokens=True)
-            for input_len, output in zip(input_lengths, outputs):
-                new_tokens = output.shape[0] - input_len
-                total_new_tokens += new_tokens
+            total_new_tokens += new_tokens
 
         total_time = sum(times)
         throughput = total_new_tokens / total_time if total_time > 0 else 0
