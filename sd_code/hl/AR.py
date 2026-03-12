@@ -38,7 +38,7 @@ class LlamaBenchmark(Benchmark):
         )
         self.model.eval()
 
-    def generate_text(self, prompts, max_new_tokens=256, batch_size=1, prefill_chunk=4096):
+    def generate_text(self, prompts, max_new_tokens=256, batch_size=1, prefill_chunk=1024):
         """AR generation with chunked prefill to avoid OOM on long contexts."""
         total_new_tokens = 0
         times = []
@@ -53,8 +53,9 @@ class LlamaBenchmark(Benchmark):
             start_time = time.time()
 
             with torch.no_grad():
-                # Chunked prefill: process prompt in chunks to limit activation memory
+                # Chunked prefill: process prompt in small chunks
                 past = None
+                last_logits = None
                 for start in range(0, prompt_len, prefill_chunk):
                     end = min(start + prefill_chunk, prompt_len)
                     out = self.model(
@@ -63,9 +64,14 @@ class LlamaBenchmark(Benchmark):
                         use_cache=True
                     )
                     past = out.past_key_values
+                    last_logits = out.logits[:, -1, :]
+                    del out
+                    if start % (prefill_chunk * 16) == 0:
+                        torch.cuda.empty_cache()
 
-                # First new token from last prefill logits
-                next_token = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
+                # First new token
+                next_token = torch.argmax(last_logits, dim=-1, keepdim=True)
+                del last_logits
                 new_tokens = 1
 
                 # Autoregressive decode
@@ -77,6 +83,7 @@ class LlamaBenchmark(Benchmark):
                     )
                     past = out.past_key_values
                     next_token = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
+                    del out
                     new_tokens += 1
                     if next_token.item() == eos_id:
                         break
@@ -85,6 +92,9 @@ class LlamaBenchmark(Benchmark):
             end_time = time.time()
             times.append(end_time - start_time)
             total_new_tokens += new_tokens
+            # Free KV cache between samples
+            del past
+            torch.cuda.empty_cache()
 
         total_time = sum(times)
         throughput = total_new_tokens / total_time if total_time > 0 else 0
