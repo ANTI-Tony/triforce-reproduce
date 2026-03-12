@@ -8,6 +8,7 @@ import sys
 
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import StaticCache
 from tree.benchmark import Benchmark
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -39,52 +40,64 @@ class LlamaBenchmark(Benchmark):
         self.model.eval()
 
     def generate_text(self, prompts, max_new_tokens=256, batch_size=1, prefill_chunk=1024):
-        """AR generation with chunked prefill to avoid OOM on long contexts."""
+        """AR generation with StaticCache + chunked prefill to avoid OOM."""
         total_new_tokens = 0
         times = []
         eos_id = self.tokenizer.eos_token_id
+        device = next(self.model.parameters()).device
 
         for i in tqdm(range(0, len(prompts), batch_size), desc="AR Generating"):
             text = prompts[i]
-            input_ids = self.tokenizer.encode(text, return_tensors='pt').to(self.model.device)
+            input_ids = self.tokenizer.encode(text, return_tensors='pt').to(device)
             prompt_len = input_ids.shape[1]
+            max_cache_len = prompt_len + max_new_tokens
+
+            # Pre-allocate full KV cache (no torch.cat needed)
+            cache = StaticCache(
+                config=self.model.config,
+                max_batch_size=1,
+                max_cache_len=max_cache_len,
+                device=device,
+                dtype=torch.float16
+            )
 
             torch.cuda.synchronize()
             start_time = time.time()
 
             with torch.no_grad():
-                # Chunked prefill: process prompt in small chunks
-                past = None
+                # Chunked prefill with StaticCache
                 last_logits = None
-                for start in range(0, prompt_len, prefill_chunk):
-                    end = min(start + prefill_chunk, prompt_len)
+                for start_pos in range(0, prompt_len, prefill_chunk):
+                    end_pos = min(start_pos + prefill_chunk, prompt_len)
+                    cache_positions = torch.arange(start_pos, end_pos, device=device)
                     out = self.model(
-                        input_ids=input_ids[:, start:end],
-                        past_key_values=past,
-                        use_cache=True
+                        input_ids=input_ids[:, start_pos:end_pos],
+                        past_key_values=cache,
+                        use_cache=True,
+                        cache_position=cache_positions,
                     )
-                    past = out.past_key_values
                     last_logits = out.logits[:, -1, :]
                     del out
-                    if start % (prefill_chunk * 16) == 0:
-                        torch.cuda.empty_cache()
 
                 # First new token
                 next_token = torch.argmax(last_logits, dim=-1, keepdim=True)
                 del last_logits
                 new_tokens = 1
+                pos = prompt_len
 
                 # Autoregressive decode
                 for _ in range(max_new_tokens - 1):
+                    cache_positions = torch.tensor([pos], device=device)
                     out = self.model(
                         input_ids=next_token,
-                        past_key_values=past,
-                        use_cache=True
+                        past_key_values=cache,
+                        use_cache=True,
+                        cache_position=cache_positions,
                     )
-                    past = out.past_key_values
                     next_token = torch.argmax(out.logits[:, -1, :], dim=-1, keepdim=True)
                     del out
                     new_tokens += 1
+                    pos += 1
                     if next_token.item() == eos_id:
                         break
 
@@ -92,8 +105,7 @@ class LlamaBenchmark(Benchmark):
             end_time = time.time()
             times.append(end_time - start_time)
             total_new_tokens += new_tokens
-            # Free KV cache between samples
-            del past
+            del cache
             torch.cuda.empty_cache()
 
         total_time = sum(times)
