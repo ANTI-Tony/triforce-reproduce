@@ -158,12 +158,14 @@ def speculative_generate(
                 last_logits = out.logits[:, -1:, :]
                 del out
 
+            # Cast to float32 and sanitize NaN/Inf from fp16 overflow at long context
+            prefill_logits = torch.nan_to_num(last_logits.squeeze(1).float(), nan=0.0, posinf=1e4, neginf=-1e4)
             if use_greedy_sampler:
-                t = torch.argmax(last_logits.squeeze(1), dim=-1)
+                t = torch.argmax(prefill_logits, dim=-1)
             else:
-                p_p = logits_processor(last_logits.squeeze(1).float())
+                p_p = logits_processor(prefill_logits)
                 t = logits_processor.sample(p_p)
-            del last_logits
+            del last_logits, prefill_logits
         else:
             # DynamicCache + single-shot prefill for short context
             Mp = target(
@@ -272,6 +274,8 @@ def speculative_generate(
             )
             target_cache = Mp.past_key_values
         target_logits = Mp.logits
+        if use_static_target:
+            target_logits = torch.nan_to_num(target_logits.float(), nan=0.0, posinf=1e4, neginf=-1e4)
 
         # rejection sampling
         n = corrected_gamma
@@ -283,7 +287,7 @@ def speculative_generate(
                     break
                 drafts_accepted += 1
         else:
-            p = logits_processor(target_logits[0].float())
+            p = logits_processor(target_logits[0])
             r = torch.rand(corrected_gamma, device=target.device)
             p = p.float()
             fractions = p[:corrected_gamma, ...] / q
