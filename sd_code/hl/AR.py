@@ -35,7 +35,7 @@ class LlamaBenchmark(Benchmark):
             model_dir,
             torch_dtype=torch.float16,
             device_map='auto',
-            attn_implementation="flash_attention_2"
+            attn_implementation="sdpa"
         )
         self.model.eval()
 
