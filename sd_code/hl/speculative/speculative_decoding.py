@@ -161,7 +161,7 @@ def speculative_generate(
             if use_greedy_sampler:
                 t = torch.argmax(last_logits.squeeze(1), dim=-1)
             else:
-                p_p = logits_processor(last_logits.squeeze(1))
+                p_p = logits_processor(last_logits.squeeze(1).float())
                 t = logits_processor.sample(p_p)
             del last_logits
         else:
@@ -283,7 +283,7 @@ def speculative_generate(
                     break
                 drafts_accepted += 1
         else:
-            p = logits_processor(target_logits[0])
+            p = logits_processor(target_logits[0].float())
             r = torch.rand(corrected_gamma, device=target.device)
             p = p.float()
             fractions = p[:corrected_gamma, ...] / q
