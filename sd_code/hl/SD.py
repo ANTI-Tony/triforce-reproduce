@@ -160,6 +160,7 @@ def run_sd(prompts, drafter, target, tokenizer, max_new_tokens, gamma,
                 use_cache=True,
                 sparse_budget=budget,
                 chunk_size=chunk_size,
+                use_greedy_sampler=True,
             )
 
         torch.cuda.synchronize()
