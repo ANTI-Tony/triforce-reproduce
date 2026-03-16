@@ -25,6 +25,8 @@ def load_prompts(dataset_name, tokenizer, max_length=4096, max_samples=20):
         return _load_longbench_qmsum(tokenizer, max_length, max_samples)
     elif dataset_name == 'lwm':
         return _load_narrativeqa(tokenizer, max_length, max_samples)
+    elif dataset_name == 'dolly':
+        return _load_dolly(tokenizer, max_length, max_samples)
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
@@ -147,4 +149,36 @@ def _load_narrativeqa(tokenizer, max_length, max_samples):
         prompts.append({'text': prompt[:10000], 'tokens': tokens[:max_length]})
 
     print(f"[lwm] {len(prompts)} prompts loaded (max_length={max_length})")
+    return prompts
+
+
+def _load_dolly(tokenizer, max_length, max_samples):
+    """Dolly validation set from local jsonl file."""
+    # Look for the file in common locations
+    candidates = [
+        os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'validation-00000-of-00001.jsonl'),
+        os.path.expanduser('~/Desktop/validation-00000-of-00001.jsonl'),
+        '/workspace/tf/data/validation-00000-of-00001.jsonl',
+    ]
+    jsonl_path = None
+    for p in candidates:
+        if os.path.exists(p):
+            jsonl_path = p
+            break
+    if jsonl_path is None:
+        raise FileNotFoundError("Dolly validation jsonl not found. Place it in data/ directory.")
+
+    prompts = []
+    with open(jsonl_path, 'r') as f:
+        for i, line in enumerate(f):
+            if len(prompts) >= max_samples:
+                break
+            item = json.loads(line)
+            text = item.get('prompt', '')
+            if not text:
+                continue
+            tokens = tokenizer.encode(text, truncation=True, max_length=max_length)
+            prompts.append({'text': text, 'tokens': tokens})
+
+    print(f"[dolly] {len(prompts)} prompts loaded (max_length={max_length})")
     return prompts

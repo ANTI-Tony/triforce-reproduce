@@ -123,7 +123,7 @@ def parse_args():
     parser.add_argument("--context", type=str, required=True,
                         choices=["long", "short"])
     parser.add_argument("--dataset", type=str, required=True,
-                        choices=["gs", "longbench_packed_qmsum", "lwm"])
+                        choices=["gs", "longbench_packed_qmsum", "lwm", "dolly"])
     parser.add_argument("--model_dir", type=str,
                         default="NousResearch/Yarn-Llama-2-7b-128k")
     parser.add_argument("--max_new_tokens", type=int, default=256)

@@ -31,7 +31,7 @@ from data_loader import load_prompts
 def parse_args():
     parser = argparse.ArgumentParser(description="SD + Sparse KV Cache Experiment")
     parser.add_argument("--dataset", type=str, required=True,
-                        choices=["gs", "longbench_packed_qmsum", "lwm"],
+                        choices=["gs", "longbench_packed_qmsum", "lwm", "dolly"],
                         help="Dataset name")
     parser.add_argument("--budget", type=int, default=0,
                         help="Sparse budget (0 = full cache)")
