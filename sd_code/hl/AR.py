@@ -122,6 +122,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="AR Baseline Benchmark")
     parser.add_argument("--context", type=str, required=True,
                         choices=["long", "short"])
+    parser.add_argument("--prompt_length", type=int, default=None,
+                        help="Override prompt length (default: use context preset)")
     parser.add_argument("--dataset", type=str, required=True,
                         choices=["gs", "longbench_packed_qmsum", "lwm", "dolly"])
     parser.add_argument("--model_dir", type=str,
@@ -136,7 +138,7 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    prompt_len = CONTEXT_PRESETS[args.context]
+    prompt_len = args.prompt_length if args.prompt_length else CONTEXT_PRESETS[args.context]
     print(f"=== AR Baseline ===")
     print(f"Context: {args.context} (prompt={prompt_len})")
     print(f"Dataset: {args.dataset}")

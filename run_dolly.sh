@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Dolly validation: AR baseline + SD(full/full) γ=3,6,9
+# Dolly validation: AR baseline + SD(full/full) γ=3
+# Prompt padded to 4096 tokens + 256 gen = 4352 total
 set -euo pipefail
 
 export HF_HOME=/workspace/tf/hf_cache
@@ -8,7 +9,7 @@ export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 pip install 'transformers>=4.38,<4.45' -q
-pip install flash-attn --no-build-isolation -q
+pip install flash-attn --no-build-isolation -q || true
 
 LARGE_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('NousResearch/Yarn-Llama-2-7b-128k', local_files_only=True))")
 SMALL_MODEL=$(python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('JackFram/llama-68m', local_files_only=True))")
@@ -23,11 +24,13 @@ RESULTS_DIR="results/dolly"
 mkdir -p "$RESULTS_DIR"
 AR_CSV="$RESULTS_DIR/dolly_ar.csv"
 SD_CSV="$RESULTS_DIR/dolly_sd.csv"
+rm -f "$AR_CSV" "$SD_CSV"
 
 SD_DIR="sd_code/hl"
+MAX_LENGTH=4352   # 4096 prompt + 256 gen
 
 echo "========================================="
-echo "  Dolly Validation: AR + SD(full)"
+echo "  Dolly Validation (prompt=4096)"
 echo "========================================="
 echo "Target: $LARGE_MODEL"
 echo "Drafter: $SMALL_MODEL"
@@ -36,11 +39,12 @@ echo "Drafter: $SMALL_MODEL"
 # Step 1: AR Baseline
 # =============================================
 echo ""
-echo "--- AR Baseline (dolly) ---"
+echo "--- AR Baseline (dolly, prompt=4096) ---"
 python3 "$SD_DIR/AR.py" \
     --context short \
     --dataset dolly \
     --model_dir "$LARGE_MODEL" \
+    --prompt_length 4096 \
     --max_new_tokens 256 \
     --max_samples 20 \
     --warmup 1 \
@@ -48,26 +52,24 @@ python3 "$SD_DIR/AR.py" \
     2>&1 | tee "$RESULTS_DIR/ar_dolly.log"
 
 # =============================================
-# Step 2: SD(full/full) γ=3,6,9
+# Step 2: SD(full/full) γ=3
 # =============================================
-for GAMMA in 3 6 9; do
-    echo ""
-    echo "--- SD(full) dolly gamma=$GAMMA ---"
-    python3 "$SD_DIR/SD.py" \
-        --dataset dolly \
-        --budget 0 \
-        --chunk_size 8 \
-        --max_length 4056 \
-        --max_new_tokens 256 \
-        --gamma "$GAMMA" \
-        --max_samples 20 \
-        --warmup 1 \
-        --skip_baseline \
-        --small_model "$SMALL_MODEL" \
-        --large_model "$LARGE_MODEL" \
-        --output_csv "$SD_CSV" \
-        2>&1 | tee "$RESULTS_DIR/sd_dolly_g${GAMMA}.log"
-done
+echo ""
+echo "--- SD(full) dolly gamma=3 prompt=4096 ---"
+python3 "$SD_DIR/SD.py" \
+    --dataset dolly \
+    --budget 0 \
+    --chunk_size 8 \
+    --max_length "$MAX_LENGTH" \
+    --max_new_tokens 256 \
+    --gamma 3 \
+    --max_samples 20 \
+    --warmup 1 \
+    --skip_baseline \
+    --small_model "$SMALL_MODEL" \
+    --large_model "$LARGE_MODEL" \
+    --output_csv "$SD_CSV" \
+    2>&1 | tee "$RESULTS_DIR/sd_dolly_g3.log"
 
 echo ""
 echo "========================================="

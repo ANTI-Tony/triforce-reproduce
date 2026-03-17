@@ -168,17 +168,29 @@ def _load_dolly(tokenizer, max_length, max_samples):
     if jsonl_path is None:
         raise FileNotFoundError("Dolly validation jsonl not found. Place it in data/ directory.")
 
-    prompts = []
+    # Collect all texts first
+    all_texts = []
     with open(jsonl_path, 'r') as f:
-        for i, line in enumerate(f):
-            if len(prompts) >= max_samples:
-                break
+        for line in f:
             item = json.loads(line)
             text = item.get('prompt', '')
-            if not text:
-                continue
-            tokens = tokenizer.encode(text, truncation=True, max_length=max_length)
-            prompts.append({'text': text, 'tokens': tokens})
+            if text:
+                all_texts.append(text)
 
-    print(f"[dolly] {len(prompts)} prompts loaded (max_length={max_length})")
+    # Concatenate texts to build prompts of exactly max_length tokens
+    prompts = []
+    concat_tokens = []
+    text_idx = 0
+    while len(prompts) < max_samples and text_idx < len(all_texts) * 10:
+        t = all_texts[text_idx % len(all_texts)]
+        text_idx += 1
+        toks = tokenizer.encode(t, add_special_tokens=False)
+        concat_tokens.extend(toks)
+
+        while len(concat_tokens) >= max_length and len(prompts) < max_samples:
+            chunk = concat_tokens[:max_length]
+            concat_tokens = concat_tokens[max_length:]
+            prompts.append({'text': '', 'tokens': chunk})
+
+    print(f"[dolly] {len(prompts)} prompts loaded (each padded to {max_length} tokens)")
     return prompts
