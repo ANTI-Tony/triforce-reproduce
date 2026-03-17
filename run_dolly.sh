@@ -27,7 +27,7 @@ SD_CSV="$RESULTS_DIR/dolly_sd.csv"
 rm -f "$AR_CSV" "$SD_CSV"
 
 SD_DIR="sd_code/hl"
-MAX_LENGTH=4352   # 4096 prompt + 256 gen
+MAX_LENGTH=4096   # total = 4096 (prompt 3840 + 256 gen)
 
 echo "========================================="
 echo "  Dolly Validation (prompt=4096)"
@@ -44,7 +44,7 @@ python3 "$SD_DIR/AR.py" \
     --context short \
     --dataset dolly \
     --model_dir "$LARGE_MODEL" \
-    --prompt_length 4096 \
+    --prompt_length 3840 \
     --max_new_tokens 256 \
     --max_samples 20 \
     --warmup 1 \
