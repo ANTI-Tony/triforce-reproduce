@@ -2,13 +2,13 @@
 # SD Experiments - All combinations
 #
 # Long-context (122K + 256):
-#   SD(sparse/full): 3 datasets × 4 budgets × 3 gammas = 36 runs
+#   SD(sparse/full): 3 datasets × 5 budgets × 3 gammas = 45 runs
 #
 # Short-context (3800 + 256):
 #   SD(full/full):   3 datasets × 3 gammas = 9 runs
-#   SD(sparse/full): 3 datasets × 4 budgets × 3 gammas = 36 runs
+#   SD(sparse/full): 3 datasets × 5 budgets × 3 gammas = 45 runs
 #
-# Total: 36 + 9 + 36 = 81 runs
+# Total: 45 + 9 + 45 = 99 runs
 set -euo pipefail
 
 export HF_HOME=/workspace/tf/hf_cache
@@ -30,7 +30,7 @@ rm -f "$CSV"
 SD_DIR="sd_code/hl"
 DATASETS=("gs" "longbench_packed_qmsum" "lwm")
 GAMMAS=(3 6 9)
-SPARSE_BUDGETS=(256 512 1024 2048)
+SPARSE_BUDGETS=(256 512 1024 2048 3800)
 
 run_sd() {
     local CTX=$1 DS=$2 BUDGET=$3 GAMMA=$4
