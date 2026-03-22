@@ -125,18 +125,14 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     # [1, cont_len - 1]
 
     # 2. Student prefill prefix (WITH grad → gradient flows through KV cache)
-    #    Temporarily disable gradient_checkpointing so use_cache works
+    #    Switch to eval() so use_cache=True works (train mode disables it).
+    #    eval() only affects dropout/batchnorm, NOT the computation graph.
     prefix_ids = input_ids[:, :prefix_len]
-    had_gc = getattr(student, "gradient_checkpointing", False)
-    if had_gc:
-        student.gradient_checkpointing_disable()
+    student.eval()
     prefix_out = student(prefix_ids, use_cache=True)
     prefix_cache = prefix_out.past_key_values
-    if had_gc:
-        student.gradient_checkpointing_enable()
-    assert prefix_cache is not None, (
-        "Student did not return KV cache. Check model.config.use_cache=True"
-    )
+    student.train()
+    assert prefix_cache is not None, "Student did not return KV cache"
     del prefix_out
 
     # Continuation tokens
