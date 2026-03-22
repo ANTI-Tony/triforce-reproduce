@@ -133,6 +133,9 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     prefix_cache = prefix_out.past_key_values
     student.train()
     assert prefix_cache is not None, "Student did not return KV cache"
+    # Convert tuple cache to DynamicCache if needed
+    if isinstance(prefix_cache, tuple):
+        prefix_cache = build_dynamic_cache(prefix_cache)
     del prefix_out
 
     # Continuation tokens
