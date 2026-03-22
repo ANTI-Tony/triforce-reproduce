@@ -125,9 +125,18 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     # [1, cont_len - 1]
 
     # 2. Student prefill prefix (WITH grad → gradient flows through KV cache)
+    #    Temporarily disable gradient_checkpointing so use_cache works
     prefix_ids = input_ids[:, :prefix_len]
+    had_gc = getattr(student, "gradient_checkpointing", False)
+    if had_gc:
+        student.gradient_checkpointing_disable()
     prefix_out = student(prefix_ids, use_cache=True)
     prefix_cache = prefix_out.past_key_values
+    if had_gc:
+        student.gradient_checkpointing_enable()
+    assert prefix_cache is not None, (
+        "Student did not return KV cache. Check model.config.use_cache=True"
+    )
     del prefix_out
 
     # Continuation tokens
@@ -238,10 +247,12 @@ def main():
         torch_dtype=torch.float32,
         device_map=device,
     )
+    student.config.use_cache = True  # Ensure cache is returned in training mode
     student.train()
     if args.gradient_checkpointing:
         student.gradient_checkpointing_enable()
         print("  Gradient checkpointing enabled")
+        print("  WARNING: gradient checkpointing disables use_cache, L_C will use workaround")
     print(f"  Student loaded: {sum(p.numel() for p in student.parameters())/1e6:.1f}M params")
 
     # ── Optimizer + scheduler ──
