@@ -206,6 +206,11 @@ def main():
                         help="Enable gradient checkpointing for student")
     parser.add_argument("--resume_from", type=str, default=None,
                         help="Resume student from checkpoint directory")
+    parser.add_argument("--rope_scale_factor", type=float, default=None,
+                        help="RoPE scaling factor for long context (e.g., 64 for 128K)")
+    parser.add_argument("--rope_scale_type", type=str, default="linear",
+                        choices=["linear", "dynamic"],
+                        help="RoPE scaling type")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -248,11 +253,29 @@ def main():
     # ── Load student (trainable, fp32) ──
     student_path = args.resume_from if args.resume_from else args.student_model
     print(f"Loading student model from {student_path} (trainable, fp32)...")
-    student = AutoModelForCausalLM.from_pretrained(
-        student_path,
+
+    # Apply RoPE scaling for long context support
+    student_kwargs = dict(
         torch_dtype=torch.float32,
         device_map=device,
         attn_implementation="sdpa",
+    )
+    if args.rope_scale_factor is not None:
+        from transformers import AutoConfig
+        student_config = AutoConfig.from_pretrained(student_path)
+        original_max_pos = student_config.max_position_embeddings  # 2048
+        student_config.rope_scaling = {
+            "type": args.rope_scale_type,
+            "factor": args.rope_scale_factor,
+        }
+        student_config.max_position_embeddings = int(original_max_pos * args.rope_scale_factor)
+        student_kwargs["config"] = student_config
+        print(f"  RoPE scaling: type={args.rope_scale_type} factor={args.rope_scale_factor}")
+        print(f"  max_position_embeddings: {original_max_pos} → {student_config.max_position_embeddings}")
+
+    student = AutoModelForCausalLM.from_pretrained(
+        student_path,
+        **student_kwargs,
     )
     student.config.use_cache = True  # Ensure cache is returned in training mode
     student.train()

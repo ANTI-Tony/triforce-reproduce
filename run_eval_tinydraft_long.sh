@@ -35,8 +35,10 @@ for DS in "${DATASETS[@]}"; do
         --context long \
         --gamma 3 \
         --budgets "256,512,1024,2048,3800" \
-        --max_samples 20 \
+        --max_samples 5 \
         --warmup 1 \
+        --rope_scale_factor 64.0 \
+        --rope_scale_type linear \
         --output_csv "$RESULTS_DIR/eval_${DS}_long_g3.csv" \
         2>&1 | tee "$RESULTS_DIR/eval_${DS}_long_g3.log"
 done

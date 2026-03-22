@@ -90,6 +90,10 @@ def main():
     parser.add_argument("--max_samples", type=int, default=20)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=8)
+    parser.add_argument("--rope_scale_factor", type=float, default=None,
+                        help="RoPE scaling factor for trained student (e.g., 64)")
+    parser.add_argument("--rope_scale_type", type=str, default="linear",
+                        choices=["linear", "dynamic"])
     parser.add_argument("--output_csv", type=str, default=None)
     args = parser.parse_args()
 
@@ -136,10 +140,22 @@ def main():
         print(f"  Student: {student_label}")
         print(f"{'─'*40}")
 
+        # Apply RoPE scaling for trained student at long context
+        drafter_kwargs = dict(torch_dtype=torch.float32, device_map=device)
+        if student_label == "tinydraft" and args.rope_scale_factor is not None:
+            from transformers import AutoConfig
+            drafter_config = AutoConfig.from_pretrained(student_path)
+            original_max_pos = drafter_config.max_position_embeddings
+            drafter_config.rope_scaling = {
+                "type": args.rope_scale_type,
+                "factor": args.rope_scale_factor,
+            }
+            drafter_config.max_position_embeddings = int(original_max_pos * args.rope_scale_factor)
+            drafter_kwargs["config"] = drafter_config
+            print(f"  RoPE scaling: factor={args.rope_scale_factor} max_pos={drafter_config.max_position_embeddings}")
         drafter = AutoModelForCausalLM.from_pretrained(
             student_path,
-            torch_dtype=torch.float32,
-            device_map=device,
+            **drafter_kwargs,
         ).eval()
 
         for budget in budgets:
