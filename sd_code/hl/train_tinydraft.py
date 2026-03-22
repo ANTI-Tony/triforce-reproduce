@@ -124,10 +124,14 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     """
     V = student.config.vocab_size
 
-    # 1. Teacher targets (no grad)
+    # 1. Teacher targets (no grad) — offload student to CPU to free GPU memory
     if verbose:
-        print("    [1/3] Teacher forward...", flush=True)
-    teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len)
+        print("    [1/3] Teacher forward (student offloaded)...", flush=True)
+    student.cpu()
+    torch.cuda.empty_cache()
+    teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=512)
+    # Move student back to GPU
+    student.to(device)
 
     # 2. Student prefill prefix (no grad, chunked)
     if verbose:
