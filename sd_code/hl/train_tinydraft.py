@@ -67,7 +67,7 @@ def sample_budget():
 
 def data_iterator(tokenizer, seq_len):
     """Yield tokenized chunks of seq_len from PG-19 train split (streaming)."""
-    dataset = load_dataset("pg19", split="train", streaming=True)
+    dataset = load_dataset("pg19", split="train", streaming=True, trust_remote_code=True)
     buffer = []
     for item in dataset:
         tokens = tokenizer.encode(item["text"], add_special_tokens=False)
