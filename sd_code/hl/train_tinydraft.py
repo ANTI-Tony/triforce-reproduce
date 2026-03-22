@@ -359,8 +359,11 @@ def main():
         torch.cuda.empty_cache()
 
         # ── Log ──
-        if step % args.log_interval == 0:
-            n = args.log_interval
+        # Print every step for first 20, then every log_interval
+        if step <= 20 or step % args.log_interval == 0:
+            n = max(1, step % args.log_interval) if step > 20 else 1
+            if step > 20 and step % args.log_interval == 0:
+                n = args.log_interval
             avg_la = running_la / n
             avg_lc = running_lc / n
             avg_total = running_total / n
