@@ -126,27 +126,26 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len)
     # [1, cont_len - 1]
 
-    # 2. Student prefill prefix (WITH grad → gradient flows through KV cache)
-    #    Switch to eval() so use_cache=True works (train mode disables it).
-    #    eval() only affects dropout/batchnorm, NOT the computation graph.
-    #    Chunk the prefill to avoid OOM on long sequences.
+    # 2. Student prefill prefix (NO grad — only continuation gets gradient)
+    #    Prefill is treated as fixed context, gradient flows through continuation only.
+    #    This is standard for long-context distillation and avoids huge computation graphs.
     if verbose:
-        print("    [2/5] Student prefill...", flush=True)
+        print("    [2/5] Student prefill (no grad)...", flush=True)
     student.eval()
-    prefix_cache = None
-    prefill_chunk = 2048
-    for start in range(0, prefix_len, prefill_chunk):
-        end = min(start + prefill_chunk, prefix_len)
-        chunk_out = student(
-            input_ids[:, start:end],
-            past_key_values=prefix_cache,
-            use_cache=True,
-        )
-        prefix_cache = chunk_out.past_key_values
-        # Convert tuple cache to DynamicCache if needed
-        if isinstance(prefix_cache, tuple):
-            prefix_cache = build_dynamic_cache(prefix_cache)
-        del chunk_out
+    with torch.no_grad():
+        prefix_cache = None
+        prefill_chunk = 2048
+        for start in range(0, prefix_len, prefill_chunk):
+            end = min(start + prefill_chunk, prefix_len)
+            chunk_out = student(
+                input_ids[:, start:end],
+                past_key_values=prefix_cache,
+                use_cache=True,
+            )
+            prefix_cache = chunk_out.past_key_values
+            if isinstance(prefix_cache, tuple):
+                prefix_cache = build_dynamic_cache(prefix_cache)
+            del chunk_out
     student.train()
     assert prefix_cache is not None, "Student did not return KV cache"
 
@@ -178,6 +177,8 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     del cont_full_out, full_logits, teacher_targets
 
     # 5. Total loss
+    if verbose:
+        print(f"    [5/5] L_A={L_A.item():.4f} L_C={L_C.item():.4f}", flush=True)
     total_loss = L_A + lam * L_C
 
     return L_A.item(), L_C.item(), total_loss
