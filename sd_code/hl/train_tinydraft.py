@@ -114,29 +114,29 @@ def get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=
 
 def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False):
     """
-    One training step.
+    One training step (simplified: single forward pass).
 
-    Returns: (L_A_val, L_C_val, total_loss_tensor)
+    When budget < prefix_len → sparse cache (L_C-style)
+    When budget >= prefix_len → full cache (L_A-style)
+    Budget sampling {256,512,1024,2048,3800} provides multi-view training.
+
+    Returns: (loss_val, loss_tensor)
     """
     V = student.config.vocab_size
 
     # 1. Teacher targets (no grad)
     if verbose:
-        print("    [1/5] Teacher forward...", flush=True)
+        print("    [1/3] Teacher forward...", flush=True)
     teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len)
-    # [1, cont_len - 1]
 
-    # 2. Student prefill prefix (NO grad — only continuation gets gradient)
-    #    Prefill is treated as fixed context, gradient flows through continuation only.
-    #    This is standard for long-context distillation and avoids huge computation graphs.
+    # 2. Student prefill prefix (no grad, chunked)
     if verbose:
-        print("    [2/5] Student prefill (no grad)...", flush=True)
+        print("    [2/3] Student prefill (no grad)...", flush=True)
     student.eval()
     with torch.no_grad():
         prefix_cache = None
-        prefill_chunk = 2048
-        for start in range(0, prefix_len, prefill_chunk):
-            end = min(start + prefill_chunk, prefix_len)
+        for start in range(0, prefix_len, 2048):
+            end = min(start + 2048, prefix_len)
             chunk_out = student(
                 input_ids[:, start:end],
                 past_key_values=prefix_cache,
@@ -147,41 +147,33 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
                 prefix_cache = build_dynamic_cache(prefix_cache)
             del chunk_out
     student.train()
-    assert prefix_cache is not None, "Student did not return KV cache"
 
-    # Continuation tokens
-    cont_ids = input_ids[:, prefix_len:]  # [1, cont_len]
+    # 3. Sparsify cache if budget < prefix_len, then continuation forward (WITH grad)
+    cont_ids = input_ids[:, prefix_len:]
+    use_sparse = budget < prefix_len
 
-    # 3. L_C: sparse cache → continuation forward
+    if use_sparse:
+        if verbose:
+            print(f"    [3/3] Sparse forward (budget={budget})...", flush=True)
+        kv_tuples = cache_to_tuples(prefix_cache)
+        sparse_tuples, _ = apply_triforce_sparse(kv_tuples, budget, chunk_size)
+        cont_cache = build_dynamic_cache(sparse_tuples)
+        cont_pos = torch.arange(prefix_len, prefix_len + cont_len, device=device).unsqueeze(0)
+        cont_out = student(cont_ids, past_key_values=cont_cache, position_ids=cont_pos)
+        del prefix_cache
+    else:
+        if verbose:
+            print("    [3/3] Full forward...", flush=True)
+        cont_out = student(cont_ids, past_key_values=prefix_cache)
+
+    logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
+    loss = F.cross_entropy(logits.reshape(-1, V), teacher_targets.reshape(-1))
+
     if verbose:
-        print(f"    [3/5] L_C sparse forward (budget={budget})...", flush=True)
-    kv_tuples = cache_to_tuples(prefix_cache)
-    sparse_tuples, _ = apply_triforce_sparse(kv_tuples, budget, chunk_size)
-    sparse_cache = build_dynamic_cache(sparse_tuples)
+        print(f"    loss={loss.item():.4f} (sparse={use_sparse})", flush=True)
 
-    # Explicit position_ids (sparse cache has wrong _seen_tokens)
-    cont_pos = torch.arange(prefix_len, prefix_len + cont_len, device=device).unsqueeze(0)
-    cont_sparse_out = student(cont_ids, past_key_values=sparse_cache, position_ids=cont_pos)
-
-    sparse_logits = cont_sparse_out.logits[:, :-1, :]  # [1, cont_len-1, V]
-    L_C = F.cross_entropy(sparse_logits.reshape(-1, V), teacher_targets.reshape(-1))
-    del cont_sparse_out, sparse_cache, sparse_logits
-
-    # 4. L_A: full cache → continuation forward
-    if verbose:
-        print("    [4/5] L_A full forward...", flush=True)
-    cont_full_out = student(cont_ids, past_key_values=prefix_cache)
-
-    full_logits = cont_full_out.logits[:, :-1, :]  # [1, cont_len-1, V]
-    L_A = F.cross_entropy(full_logits.reshape(-1, V), teacher_targets.reshape(-1))
-    del cont_full_out, full_logits, teacher_targets
-
-    # 5. Total loss
-    if verbose:
-        print(f"    [5/5] L_A={L_A.item():.4f} L_C={L_C.item():.4f}", flush=True)
-    total_loss = L_A + lam * L_C
-
-    return L_A.item(), L_C.item(), total_loss
+    del cont_out, logits, teacher_targets
+    return loss.item(), loss
 
 
 # ── Main ──
@@ -300,7 +292,7 @@ def main():
     print("  Training started")
     print(f"{'='*60}\n")
 
-    running_la, running_lc, running_total = 0.0, 0.0, 0.0
+    running_total = 0.0
     start_time = time.time()
 
     for step in range(1, args.total_steps + 1):
@@ -323,67 +315,63 @@ def main():
         optimizer.zero_grad(set_to_none=True)
 
         try:
-            is_verbose = (step <= 2)  # Verbose for first 2 steps
-            la_val, lc_val, total_loss = train_step(
+            is_verbose = (step <= 3)  # Verbose for first 3 steps
+            loss_val, loss_tensor = train_step(
                 student, teacher, input_ids,
                 prefix_len, args.cont_len,
                 budget, args.chunk_size, args.lam, device,
                 verbose=is_verbose,
             )
         except torch.cuda.OutOfMemoryError:
-            print(f"  [Step {step}] OOM with budget={budget}, skipping")
+            print(f"  [Step {step}] OOM with budget={budget}, skipping", flush=True)
             optimizer.zero_grad(set_to_none=True)
             torch.cuda.empty_cache()
             continue
 
         # Check for NaN
-        if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print(f"  [Step {step}] NaN/Inf loss, skipping")
+        if torch.isnan(loss_tensor) or torch.isinf(loss_tensor):
+            print(f"  [Step {step}] NaN/Inf loss, skipping", flush=True)
             optimizer.zero_grad(set_to_none=True)
-            del total_loss
+            del loss_tensor
             torch.cuda.empty_cache()
             continue
 
         # Backward
-        total_loss.backward()
+        if is_verbose:
+            print("    backward...", flush=True)
+        loss_tensor.backward()
+        if is_verbose:
+            print("    optimizer step...", flush=True)
         torch.nn.utils.clip_grad_norm_(student.parameters(), args.grad_clip)
         optimizer.step()
         scheduler.step()
 
         # Accumulate for logging
-        running_la += la_val
-        running_lc += lc_val
-        running_total += total_loss.item()
+        running_total += loss_val
 
-        del input_ids, total_loss
+        del input_ids, loss_tensor
         torch.cuda.empty_cache()
 
         # ── Log ──
         # Print every step for first 20, then every log_interval
         if step <= 20 or step % args.log_interval == 0:
-            n = max(1, step % args.log_interval) if step > 20 else 1
-            if step > 20 and step % args.log_interval == 0:
-                n = args.log_interval
-            avg_la = running_la / n
-            avg_lc = running_lc / n
-            avg_total = running_total / n
+            n = 1 if step <= 20 else args.log_interval
+            avg_loss = running_total / n
             elapsed = time.time() - start_time
             lr_now = scheduler.get_last_lr()[0]
             peak_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
 
             print(
                 f"[{step:5d}/{args.total_steps}] "
-                f"L_A={avg_la:.4f}  L_C={avg_lc:.4f}  total={avg_total:.4f}  "
+                f"loss={avg_loss:.4f}  "
                 f"b={budget:4d}  lr={lr_now:.2e}  "
-                f"peak={peak_mb:.0f}MB  {elapsed/step:.1f}s/step"
+                f"peak={peak_mb:.0f}MB  {elapsed/step:.1f}s/step",
+                flush=True,
             )
 
             log_entry = {
                 "step": step,
-                "L_A": round(avg_la, 6),
-                "L_C": round(avg_lc, 6),
-                "L_B": 0.0,
-                "total": round(avg_total, 6),
+                "loss": round(avg_loss, 6),
                 "budget": budget,
                 "lr": lr_now,
                 "peak_gpu_mb": round(peak_mb, 0),
@@ -393,7 +381,7 @@ def main():
             with open(log_path, "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
 
-            running_la, running_lc, running_total = 0.0, 0.0, 0.0
+            running_total = 0.0
 
         # ── Checkpoint ──
         if step % args.save_interval == 0:
