@@ -29,8 +29,10 @@ def run_sd_eval(target, drafter, tokenizer, prompts, gamma, budget, chunk_size,
     total_accepted = 0.0
     total_speculated = 0.0
 
+    n_prompts = len(prompts)
     for i, prompt in enumerate(prompts):
         tokens = prompt["tokens"]
+        print(f"      sample {i+1}/{n_prompts} (prompt={len(tokens)} tokens)...", end="", flush=True)
         torch.cuda.synchronize()
         t0 = time.time()
 
@@ -51,6 +53,8 @@ def run_sd_eval(target, drafter, tokenizer, prompts, gamma, budget, chunk_size,
 
         torch.cuda.synchronize()
         t1 = time.time()
+        elapsed = t1 - t0
+        acc = accepted / speculated if speculated > 0 else 0
 
         if i >= warmup:
             total_tokens += len(output)
@@ -58,6 +62,7 @@ def run_sd_eval(target, drafter, tokenizer, prompts, gamma, budget, chunk_size,
             total_accepted += accepted
             total_speculated += speculated
 
+        print(f" {elapsed:.1f}s  accept={acc:.3f}  gen={len(output)} tokens", flush=True)
         torch.cuda.empty_cache()
 
     throughput = total_tokens / total_time if total_time > 0 else 0
