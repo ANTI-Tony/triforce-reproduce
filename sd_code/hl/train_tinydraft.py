@@ -112,7 +112,7 @@ def get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=
 
 # ── Training step ──
 
-def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device):
+def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False):
     """
     One training step.
 
@@ -121,27 +121,41 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     V = student.config.vocab_size
 
     # 1. Teacher targets (no grad)
+    if verbose:
+        print("    [1/5] Teacher forward...", flush=True)
     teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len)
     # [1, cont_len - 1]
 
     # 2. Student prefill prefix (WITH grad → gradient flows through KV cache)
     #    Switch to eval() so use_cache=True works (train mode disables it).
     #    eval() only affects dropout/batchnorm, NOT the computation graph.
-    prefix_ids = input_ids[:, :prefix_len]
+    #    Chunk the prefill to avoid OOM on long sequences.
+    if verbose:
+        print("    [2/5] Student prefill...", flush=True)
     student.eval()
-    prefix_out = student(prefix_ids, use_cache=True)
-    prefix_cache = prefix_out.past_key_values
+    prefix_cache = None
+    prefill_chunk = 2048
+    for start in range(0, prefix_len, prefill_chunk):
+        end = min(start + prefill_chunk, prefix_len)
+        chunk_out = student(
+            input_ids[:, start:end],
+            past_key_values=prefix_cache,
+            use_cache=True,
+        )
+        prefix_cache = chunk_out.past_key_values
+        # Convert tuple cache to DynamicCache if needed
+        if isinstance(prefix_cache, tuple):
+            prefix_cache = build_dynamic_cache(prefix_cache)
+        del chunk_out
     student.train()
     assert prefix_cache is not None, "Student did not return KV cache"
-    # Convert tuple cache to DynamicCache if needed
-    if isinstance(prefix_cache, tuple):
-        prefix_cache = build_dynamic_cache(prefix_cache)
-    del prefix_out
 
     # Continuation tokens
     cont_ids = input_ids[:, prefix_len:]  # [1, cont_len]
 
     # 3. L_C: sparse cache → continuation forward
+    if verbose:
+        print(f"    [3/5] L_C sparse forward (budget={budget})...", flush=True)
     kv_tuples = cache_to_tuples(prefix_cache)
     sparse_tuples, _ = apply_triforce_sparse(kv_tuples, budget, chunk_size)
     sparse_cache = build_dynamic_cache(sparse_tuples)
@@ -155,8 +169,8 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     del cont_sparse_out, sparse_cache, sparse_logits
 
     # 4. L_A: full cache → continuation forward
-    #    (prefix_cache is unmodified — only sparse_cache was modified above)
-    #    position_ids auto-computed from prefix_cache._seen_tokens = prefix_len ✓
+    if verbose:
+        print("    [4/5] L_A full forward...", flush=True)
     cont_full_out = student(cont_ids, past_key_values=prefix_cache)
 
     full_logits = cont_full_out.logits[:, :-1, :]  # [1, cont_len-1, V]
@@ -245,6 +259,7 @@ def main():
         student_path,
         torch_dtype=torch.float32,
         device_map=device,
+        attn_implementation="sdpa",
     )
     student.config.use_cache = True  # Ensure cache is returned in training mode
     student.train()
@@ -289,12 +304,16 @@ def main():
 
     for step in range(1, args.total_steps + 1):
         # Get next sample
+        if step == 1:
+            print("  Loading first PG-19 sample (may download data)...", flush=True)
         try:
             tokens = next(data_iter)
         except StopIteration:
             print("  [Data] Restarting PG-19 iterator")
             data_iter = data_iterator(tokenizer, args.seq_len)
             tokens = next(data_iter)
+        if step == 1:
+            print(f"  Got sample: {tokens.shape[0]} tokens", flush=True)
 
         input_ids = tokens.unsqueeze(0).to(device)  # [1, seq_len]
         budget = sample_budget()
@@ -303,10 +322,12 @@ def main():
         optimizer.zero_grad(set_to_none=True)
 
         try:
+            is_verbose = (step <= 2)  # Verbose for first 2 steps
             la_val, lc_val, total_loss = train_step(
                 student, teacher, input_ids,
                 prefix_len, args.cont_len,
                 budget, args.chunk_size, args.lam, device,
+                verbose=is_verbose,
             )
         except torch.cuda.OutOfMemoryError:
             print(f"  [Step {step}] OOM with budget={budget}, skipping")
