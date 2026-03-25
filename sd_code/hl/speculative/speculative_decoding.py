@@ -108,6 +108,7 @@ def speculative_generate(
     use_greedy_sampler: bool = False,
     sparse_budget: Optional[int] = None,
     chunk_size: int = 8,
+    drafter_max_pos: Optional[int] = None,
 ) -> Tuple[List[int], float]:
     """
     Speculative Decoding with optional sparse drafter KV cache.
@@ -196,11 +197,16 @@ def speculative_generate(
         if use_static_target:
             for start_pos in range(0, prompt_len, prefill_chunk):
                 end_pos = min(start_pos + prefill_chunk, prompt_len)
-                Mq = drafter(
+                drafter_prefill_kwargs = dict(
                     input_ids=input_ids[:, start_pos:end_pos],
                     past_key_values=drafter_cache,
                     use_cache=use_cache,
                 )
+                if drafter_max_pos is not None:
+                    drafter_prefill_kwargs["position_ids"] = (
+                        torch.arange(start_pos, end_pos, device=drafter.device).unsqueeze(0) % drafter_max_pos
+                    )
+                Mq = drafter(**drafter_prefill_kwargs)
                 drafter_cache = Mq.past_key_values
                 del Mq
         else:
@@ -234,8 +240,10 @@ def speculative_generate(
 
         for k in range(corrected_gamma):
             # Build position_ids for drafter
-            if use_sparse:
+            if use_sparse or drafter_max_pos is not None:
                 pos_id = current_position + k
+                if drafter_max_pos is not None:
+                    pos_id = pos_id % drafter_max_pos
                 position_ids = torch.tensor([[pos_id]], device=drafter.device)
             else:
                 position_ids = None
@@ -332,8 +340,10 @@ def speculative_generate(
                     target_cache = prune_cache(target_cache, corrected_gamma - n)
         else:
             # all drafts accepted: supplement drafter cache
-            if use_sparse:
+            if use_sparse or drafter_max_pos is not None:
                 pos_id = current_position + corrected_gamma
+                if drafter_max_pos is not None:
+                    pos_id = pos_id % drafter_max_pos
                 position_ids = torch.tensor([[pos_id]], device=drafter.device)
             else:
                 position_ids = None
