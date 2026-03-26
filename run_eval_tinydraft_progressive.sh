@@ -18,13 +18,13 @@ mkdir -p "$RESULTS_DIR"
 
 echo "========================================="
 echo "  TinyDraft Progressive Context Evaluation"
-echo "  Contexts: 4K, 8K, 16K, 32K"
+echo "  Contexts: 16K, 32K, 64K"
 echo "  Position clamping: auto (pos % 2048)"
 echo "========================================="
 echo "Trained: $TRAINED"
 echo ""
 
-LENGTHS=(4096 8192 16384 32768)
+LENGTHS=(16384 32768 65536)
 DS="gs"
 
 for LEN in "${LENGTHS[@]}"; do
