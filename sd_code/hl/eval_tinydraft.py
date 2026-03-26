@@ -95,11 +95,16 @@ def main():
                         help="RoPE scaling factor for trained student (e.g., 64)")
     parser.add_argument("--rope_scale_type", type=str, default="linear",
                         choices=["linear", "dynamic"])
+    parser.add_argument("--max_length", type=int, default=None,
+                        help="Override max prompt length (default: 3800 for short, 124928 for long)")
     parser.add_argument("--output_csv", type=str, default=None)
     args = parser.parse_args()
 
     device = torch.device("cuda")
-    max_length = 124928 if args.context == "long" else 3800
+    if args.max_length is not None:
+        max_length = args.max_length
+    else:
+        max_length = 124928 if args.context == "long" else 3800
     budgets = [int(b) for b in args.budgets.split(",")]
 
     print("=" * 60)
