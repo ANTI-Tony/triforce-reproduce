@@ -21,7 +21,7 @@ from speculative_decoding import speculative_generate
 
 
 def run_sd_eval(target, drafter, tokenizer, prompts, gamma, budget, chunk_size,
-                max_new_tokens, warmup, device, drafter_max_pos=None):
+                max_new_tokens, warmup, device):
     """Run SD and return (throughput, acceptance_rate, total_tokens, total_time)."""
     eos_id = tokenizer.eos_token_id or 2
     total_tokens = 0
@@ -49,7 +49,6 @@ def run_sd_eval(target, drafter, tokenizer, prompts, gamma, budget, chunk_size,
             use_greedy_sampler=True,
             sparse_budget=budget if budget > 0 else None,
             chunk_size=chunk_size,
-            drafter_max_pos=drafter_max_pos,
         )
 
         torch.cuda.synchronize()
@@ -164,16 +163,6 @@ def main():
             **drafter_kwargs,
         ).eval()
 
-        # Auto-detect drafter max_position_embeddings for position clamping
-        # Apply when prompt exceeds drafter's native position range
-        drafter_native_max_pos = getattr(drafter.config, 'max_position_embeddings', None)
-        # If RoPE scaling was applied, native range is already extended
-        if args.rope_scale_factor is not None and student_label == "tinydraft":
-            drafter_native_max_pos = None  # Already extended, no clamping needed
-        use_pos_clamp = (drafter_native_max_pos is not None and max_length > drafter_native_max_pos)
-        if use_pos_clamp:
-            print(f"  Position clamping: pos % {drafter_native_max_pos} (prompt {max_length} > max_pos {drafter_native_max_pos})")
-
         for budget in budgets:
             budget_label = "full" if budget == 0 else f"b{budget}"
             print(f"\n  [{student_label}] budget={budget_label} gamma={args.gamma}...")
@@ -183,7 +172,6 @@ def main():
                 target, drafter, tokenizer, prompts,
                 args.gamma, budget, args.chunk_size,
                 args.max_new_tokens, args.warmup, device,
-                drafter_max_pos=drafter_native_max_pos if use_pos_clamp else None,
             )
             peak_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
 

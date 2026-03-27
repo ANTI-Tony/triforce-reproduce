@@ -194,19 +194,17 @@ def speculative_generate(
             printing.initial_step(t, tokenizer)
 
         # Drafter prefill (chunked for long context to avoid activation OOM)
+        # No position clamping here - let model use natural positions during prefill.
+        # After sparsification, cache length = budget, so draft positions auto-start
+        # from budget (within safe range).
         if use_static_target:
             for start_pos in range(0, prompt_len, prefill_chunk):
                 end_pos = min(start_pos + prefill_chunk, prompt_len)
-                drafter_prefill_kwargs = dict(
+                Mq = drafter(
                     input_ids=input_ids[:, start_pos:end_pos],
                     past_key_values=drafter_cache,
                     use_cache=use_cache,
                 )
-                if drafter_max_pos is not None:
-                    drafter_prefill_kwargs["position_ids"] = (
-                        torch.arange(start_pos, end_pos, device=drafter.device).unsqueeze(0) % drafter_max_pos
-                    )
-                Mq = drafter(**drafter_prefill_kwargs)
                 drafter_cache = Mq.past_key_values
                 del Mq
         else:
@@ -239,20 +237,12 @@ def speculative_generate(
         current_position = tot_token_nums - 1
 
         for k in range(corrected_gamma):
-            # Build position_ids for drafter
-            if use_sparse or drafter_max_pos is not None:
-                pos_id = current_position + k
-                if drafter_max_pos is not None:
-                    pos_id = pos_id % drafter_max_pos
-                position_ids = torch.tensor([[pos_id]], device=drafter.device)
-            else:
-                position_ids = None
-
+            # No explicit position_ids — model auto-computes from cache length.
+            # After sparsification, cache length = budget, so positions stay in safe range.
             Mq = drafter(
                 input_ids=input_ids[..., current_position + k: current_position + k + 1],
                 past_key_values=drafter_cache,
                 use_cache=use_cache,
-                position_ids=position_ids,
             )
             drafter_cache = Mq.past_key_values
 
@@ -340,19 +330,10 @@ def speculative_generate(
                     target_cache = prune_cache(target_cache, corrected_gamma - n)
         else:
             # all drafts accepted: supplement drafter cache
-            if use_sparse or drafter_max_pos is not None:
-                pos_id = current_position + corrected_gamma
-                if drafter_max_pos is not None:
-                    pos_id = pos_id % drafter_max_pos
-                position_ids = torch.tensor([[pos_id]], device=drafter.device)
-            else:
-                position_ids = None
-
             Mq = drafter(
                 input_ids=input_ids[..., current_position + corrected_gamma: current_position + corrected_gamma + 1],
                 past_key_values=drafter_cache,
                 use_cache=use_cache,
-                position_ids=position_ids,
             )
             drafter_cache = Mq.past_key_values
 
