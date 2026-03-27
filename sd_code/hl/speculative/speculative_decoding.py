@@ -237,12 +237,17 @@ def speculative_generate(
         current_position = tot_token_nums - 1
 
         for k in range(corrected_gamma):
-            # No explicit position_ids — model auto-computes from cache length.
-            # After sparsification, cache length = budget, so positions stay in safe range.
+            # Pass real position_ids when using sparse cache (matches training behavior)
+            if use_sparse:
+                position_ids = torch.tensor([[current_position + k]], device=drafter.device)
+            else:
+                position_ids = None
+
             Mq = drafter(
                 input_ids=input_ids[..., current_position + k: current_position + k + 1],
                 past_key_values=drafter_cache,
                 use_cache=use_cache,
+                position_ids=position_ids,
             )
             drafter_cache = Mq.past_key_values
 
@@ -330,10 +335,16 @@ def speculative_generate(
                     target_cache = prune_cache(target_cache, corrected_gamma - n)
         else:
             # all drafts accepted: supplement drafter cache
+            if use_sparse:
+                position_ids = torch.tensor([[current_position + corrected_gamma]], device=drafter.device)
+            else:
+                position_ids = None
+
             Mq = drafter(
                 input_ids=input_ids[..., current_position + corrected_gamma: current_position + corrected_gamma + 1],
                 past_key_values=drafter_cache,
                 use_cache=use_cache,
+                position_ids=position_ids,
             )
             drafter_cache = Mq.past_key_values
 
