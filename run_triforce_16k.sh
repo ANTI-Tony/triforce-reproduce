@@ -6,11 +6,8 @@ export HF_HOME=/workspace/tf/hf_cache
 export TRANSFORMERS_CACHE=/workspace/tf/hf_cache
 export HF_DATASETS_CACHE=/workspace/tf/hf_cache/datasets
 
-RESULTS_DIR="/workspace/tf/triforce-reproduce/results/triforce_16k"
+RESULTS_DIR="/workspace/tf/triforce-reproduce/results/triforce_8k_16k"
 mkdir -p "$RESULTS_DIR"
-CSV="$RESULTS_DIR/triforce_16k_results.csv"
-rm -f "$CSV"
-echo "dataset,budget,baseline_ms,acceptance,triforce_ms,speedup,peak_gpu_mb" > "$CSV"
 
 DATASETS=("gs")
 
@@ -20,36 +17,34 @@ DRAFT_CACHE=256
 GAMMA=3
 
 echo "========================================="
-echo "  TriForce 16K (prefill=16128, gen=256)"
+echo "  TriForce 8K & 16K Eval"
 echo "========================================="
 
-for DS in "${DATASETS[@]}"; do
+for PREFILL in 7936 16128; do
+    CONTEXT=$((PREFILL + 256))
     echo ""
-    echo "--- Dataset: $DS ---"
+    echo "--- Prefill=${PREFILL} (context ~${CONTEXT}) ---"
 
-    LOG="$RESULTS_DIR/${DS}_16k.log"
+    for DS in "${DATASETS[@]}"; do
+        LOG="$RESULTS_DIR/${DS}_${PREFILL}.log"
 
-    python test/on_chip.py \
-        --prefill 16128 \
-        --gen_len 256 \
-        --budget "$BUDGET" \
-        --chunk_size 8 \
-        --draft_cache_budget "$DRAFT_CACHE" \
-        --gamma "$GAMMA" \
-        --top_p 0.9 \
-        --temp 0.6 \
-        --dataset "$DS" \
-        2>&1 | tee "$LOG"
+        python test/on_chip.py \
+            --prefill "$PREFILL" \
+            --gen_len 256 \
+            --budget "$BUDGET" \
+            --chunk_size 8 \
+            --draft_cache_budget "$DRAFT_CACHE" \
+            --gamma "$GAMMA" \
+            --top_p 0.9 \
+            --temp 0.6 \
+            --dataset "$DS" \
+            2>&1 | tee "$LOG"
 
-    BASELINE=$(grep -oP 'average latency: \K[0-9.]+' "$LOG" | head -1 || echo "N/A")
-    ACCEPTANCE=$(grep -oP 'acceptance rate \(NOT per token\): \K[0-9.]+' "$LOG" || echo "N/A")
-    TRIFORCE=$(grep -oP '\[TriForce\] average latency: \K[0-9.]+' "$LOG" || echo "N/A")
-    SPEEDUP=$(grep -oP '\[E2E\] average latency: \K[0-9.]+' "$LOG" || echo "N/A")
-
-    echo "$DS,$BUDGET,$BASELINE,$ACCEPTANCE,$TRIFORCE,$SPEEDUP" >> "$CSV"
+        echo "[DONE] $DS prefill=$PREFILL"
+    done
 done
 
 echo ""
 echo "========================================="
-echo "  Done! Results: $CSV"
+echo "  All Done!"
 echo "========================================="
