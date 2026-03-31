@@ -20,7 +20,7 @@ echo "========================================="
 echo "  TriForce 8K & 16K Eval"
 echo "========================================="
 
-for PREFILL in 7936 16128; do
+for PREFILL in 16128; do
     CONTEXT=$((PREFILL + 256))
     echo ""
     echo "--- Prefill=${PREFILL} (context ~${CONTEXT}) ---"
