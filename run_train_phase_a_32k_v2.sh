@@ -18,7 +18,7 @@ python3 sd_code/hl/train_tinydraft.py \
     --lr 2e-6 \
     --weight_decay 0.01 \
     --warmup_steps 150 \
-    --total_steps 5000 \
+    --total_steps 3000 \
     --grad_clip 1.0 \
     --log_interval 10 \
     --save_interval 500 \
