@@ -211,6 +211,8 @@ def main():
     parser.add_argument("--rope_scale_type", type=str, default="linear",
                         choices=["linear", "dynamic"],
                         help="RoPE scaling type")
+    parser.add_argument("--full_cache_only", action="store_true",
+                        help="Disable sparse training (L_A only, no L_C)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -226,8 +228,12 @@ def main():
     print(f"Teacher:    {args.teacher_model}")
     print(f"Student:    {args.student_model}")
     print(f"seq_len:    {args.seq_len}  (prefix={prefix_len}, cont={args.cont_len})")
-    print(f"Loss:       L = L_A + {args.lam} * L_C  (β=0, L_B off)")
-    print(f"Budgets:    {BUDGETS}  weights={BUDGET_WEIGHTS}")
+    if args.full_cache_only:
+        print(f"Loss:       L = L_A only (full cache, no sparse training)")
+        print(f"Budgets:    full cache (budget={prefix_len})")
+    else:
+        print(f"Loss:       L = L_A + {args.lam} * L_C  (β=0, L_B off)")
+        print(f"Budgets:    {BUDGETS}  weights={BUDGET_WEIGHTS}")
     print(f"Optimizer:  AdamW lr={args.lr} wd={args.weight_decay}")
     print(f"Schedule:   warmup={args.warmup_steps} → cosine → 0")
     print(f"Steps:      {args.total_steps}")
@@ -332,7 +338,7 @@ def main():
             print(f"  Got sample: {tokens.shape[0]} tokens", flush=True)
 
         input_ids = tokens.unsqueeze(0).to(device)  # [1, seq_len]
-        budget = sample_budget()
+        budget = prefix_len if args.full_cache_only else sample_budget()
 
         # Forward + loss
         optimizer.zero_grad(set_to_none=True)
