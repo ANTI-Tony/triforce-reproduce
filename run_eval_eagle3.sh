@@ -23,7 +23,7 @@ fi
 
 cd /workspace/EAGLE
 
-for PROMPT_LEN in 3800 8192 16384 32768; do
+for PROMPT_LEN in 2000 3800 8192 16384 32768; do
   for DS in gs longbench_packed_qmsum lwm; do
     echo ""
     echo "--- EAGLE-3: prompt=${PROMPT_LEN}, dataset=${DS} ---"
