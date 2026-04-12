@@ -53,19 +53,19 @@ model.eval()
 tokenizer = model.tokenizer
 
 # Load dataset
-from sd_code.hl.eval_tinydraft import load_prompts
+from sd_code.hl.data_loader import load_prompts
 prompts = load_prompts('${DS}', tokenizer, max_length=${PROMPT_LEN}, max_samples=11)
 
 print(f'Loaded {len(prompts)} prompts')
 
 # Warmup
-input_ids = prompts[0].unsqueeze(0).cuda()
+input_ids = torch.tensor([prompts[0]['tokens']], device='cuda')
 _ = model.eagenerate(input_ids, temperature=0.0, max_new_tokens=32)
 
 # Evaluate
 results = []
 for i, p in enumerate(prompts[1:]):  # skip warmup
-    input_ids = p.unsqueeze(0).cuda()
+    input_ids = torch.tensor([p['tokens']], device='cuda')
     prompt_len = input_ids.shape[1]
 
     torch.cuda.synchronize()
