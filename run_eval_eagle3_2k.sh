@@ -56,7 +56,8 @@ model.eval()
 tokenizer = model.tokenizer
 print("Model loaded!")
 
-MAX_PROMPT = 2048
+MAX_PROMPT_SHORT = 2048  # for short datasets (prompt << 2048)
+MAX_PROMPT_LONG = 1900   # for long datasets (leave room for tree=60)
 MAX_NEW_TOKENS = 256
 MAX_SAMPLES = 20
 
@@ -99,10 +100,10 @@ def load_dataset_prompts(name):
                 if turns:
                     prompts.append(turns[0])
     elif name in ["gs", "longbench", "lwm"]:
-        # Use our data_loader for long datasets
+        # Use our data_loader for long datasets (truncated to leave room for tree)
         from sd_code.hl.data_loader import load_prompts as lp
         ds_name = "longbench_packed_qmsum" if name == "longbench" else name
-        data = lp(ds_name, tokenizer, max_length=MAX_PROMPT, max_samples=MAX_SAMPLES+1)
+        data = lp(ds_name, tokenizer, max_length=MAX_PROMPT_LONG, max_samples=MAX_SAMPLES+1)
         for d in data:
             text = tokenizer.decode(d['tokens'], skip_special_tokens=True)
             prompts.append(text)
@@ -112,12 +113,14 @@ def load_dataset_prompts(name):
 
 def run_eagle3_eval(dataset_name, prompts):
     """Run EAGLE-3 evaluation on a list of prompts."""
-    print(f"\n--- EAGLE-3: {dataset_name} (max_prompt={MAX_PROMPT}) ---")
+    is_long = dataset_name in ["gs", "longbench", "lwm"]
+    max_p = MAX_PROMPT_LONG if is_long else MAX_PROMPT_SHORT
+    print(f"\n--- EAGLE-3: {dataset_name} (max_prompt={max_p}) ---")
 
     # Tokenize and truncate
     tokenized = []
     for p in prompts:
-        ids = tokenizer.encode(p, truncation=True, max_length=MAX_PROMPT)
+        ids = tokenizer.encode(p, truncation=True, max_length=max_p)
         tokenized.append(ids)
 
     print(f"  {len(tokenized)} prompts, avg length: {sum(len(t) for t in tokenized)/len(tokenized):.0f} tokens")
@@ -126,22 +129,11 @@ def run_eagle3_eval(dataset_name, prompts):
     input_ids = torch.tensor([tokenized[0]], device='cuda')
     _ = model.eagenerate(input_ids, temperature=0.0, max_new_tokens=32)
 
-    # Also run AR baseline
-    ar_times = []
-    eagle_times = []
     results = []
 
     for i, tokens in enumerate(tokenized[1:]):  # skip warmup
         input_ids = torch.tensor([tokens], device='cuda')
         prompt_len = input_ids.shape[1]
-
-        # AR baseline
-        torch.cuda.synchronize()
-        t0 = time.time()
-        ar_out = model.base_model.generate(input_ids, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
-        torch.cuda.synchronize()
-        ar_time = time.time() - t0
-        ar_gen = ar_out.shape[1] - prompt_len
 
         # EAGLE-3
         torch.cuda.synchronize()
@@ -151,37 +143,29 @@ def run_eagle3_eval(dataset_name, prompts):
         eagle_time = time.time() - t0
         eagle_gen = eagle_out.shape[1] - prompt_len
 
-        ar_tps = ar_gen / ar_time if ar_time > 0 else 0
         eagle_tps = eagle_gen / eagle_time if eagle_time > 0 else 0
-        speedup = eagle_tps / ar_tps if ar_tps > 0 else 0
 
-        print(f"  sample {i+1}: prompt={prompt_len}, AR={ar_tps:.1f}tok/s, EAGLE={eagle_tps:.1f}tok/s, speedup={speedup:.2f}x")
+        print(f"  sample {i+1}: prompt={prompt_len}, gen={eagle_gen}, {eagle_tps:.1f}tok/s, {eagle_time:.1f}s")
 
         results.append({
             'prompt_len': prompt_len,
-            'ar_throughput': ar_tps,
             'eagle_throughput': eagle_tps,
-            'speedup': speedup,
-            'ar_gen': int(ar_gen),
             'eagle_gen': int(eagle_gen),
+            'eagle_time': eagle_time,
         })
 
     # Summary
-    avg_ar = sum(r['ar_throughput'] for r in results) / len(results)
     avg_eagle = sum(r['eagle_throughput'] for r in results) / len(results)
-    avg_speedup = avg_eagle / avg_ar if avg_ar > 0 else 0
 
-    print(f"\n  [{dataset_name}] AR={avg_ar:.1f}tok/s, EAGLE-3={avg_eagle:.1f}tok/s, Speedup={avg_speedup:.2f}x")
+    print(f"\n  [{dataset_name}] EAGLE-3 avg={avg_eagle:.1f}tok/s ({len(results)} samples)")
 
     # Save
     out_path = f"/workspace/triforce-experiment/results/eagle3/eagle3_2k_{dataset_name}.json"
     with open(out_path, 'w') as f:
         json.dump({
             'dataset': dataset_name,
-            'max_prompt': MAX_PROMPT,
-            'avg_ar_throughput': avg_ar,
+            'max_prompt': max_p,
             'avg_eagle_throughput': avg_eagle,
-            'avg_speedup': avg_speedup,
             'results': results,
         }, f, indent=2)
     print(f"  Saved: {out_path}")
