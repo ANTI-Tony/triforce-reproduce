@@ -56,6 +56,18 @@ model.eval()
 tokenizer = model.tokenizer
 print("Model loaded!")
 
+# Monkey-patch to track acceptance rate
+import eagle.model.utils as eu
+_orig_evaluate_posterior = eu.evaluate_posterior
+_accept_log = []
+
+def _tracked_evaluate_posterior(logits, candidates, logits_processor, *args, **kwargs):
+    best_candidate, accept_length, sample_p = _orig_evaluate_posterior(logits, candidates, logits_processor, *args, **kwargs)
+    _accept_log.append(accept_length.item() + 1)  # +1 for bonus token
+    return best_candidate, accept_length, sample_p
+
+eu.evaluate_posterior = _tracked_evaluate_posterior
+
 MAX_PROMPT_SHORT = 2048  # for short datasets (prompt << 2048)
 MAX_PROMPT_LONG = 1900   # for long datasets (leave room for tree=60)
 MAX_NEW_TOKENS = 256
@@ -136,6 +148,7 @@ def run_eagle3_eval(dataset_name, prompts):
         prompt_len = input_ids.shape[1]
 
         # EAGLE-3
+        _accept_log.clear()
         torch.cuda.synchronize()
         t0 = time.time()
         eagle_out = model.eagenerate(input_ids, temperature=0.0, max_new_tokens=MAX_NEW_TOKENS)
@@ -144,20 +157,25 @@ def run_eagle3_eval(dataset_name, prompts):
         eagle_gen = eagle_out.shape[1] - prompt_len
 
         eagle_tps = eagle_gen / eagle_time if eagle_time > 0 else 0
+        mean_accept_len = sum(_accept_log) / len(_accept_log) if _accept_log else 0
+        n_steps = len(_accept_log)
 
-        print(f"  sample {i+1}: prompt={prompt_len}, gen={eagle_gen}, {eagle_tps:.1f}tok/s, {eagle_time:.1f}s")
+        print(f"  sample {i+1}: prompt={prompt_len}, gen={eagle_gen}, {eagle_tps:.1f}tok/s, accept_len={mean_accept_len:.2f}, steps={n_steps}")
 
         results.append({
             'prompt_len': prompt_len,
             'eagle_throughput': eagle_tps,
             'eagle_gen': int(eagle_gen),
             'eagle_time': eagle_time,
+            'mean_accept_length': mean_accept_len,
+            'n_steps': n_steps,
         })
 
     # Summary
     avg_eagle = sum(r['eagle_throughput'] for r in results) / len(results)
+    avg_accept_len = sum(r['mean_accept_length'] for r in results) / len(results)
 
-    print(f"\n  [{dataset_name}] EAGLE-3 avg={avg_eagle:.1f}tok/s ({len(results)} samples)")
+    print(f"\n  [{dataset_name}] EAGLE-3 avg={avg_eagle:.1f}tok/s, avg_accept_len={avg_accept_len:.2f} ({len(results)} samples)")
 
     # Save
     out_path = f"/workspace/triforce-experiment/results/eagle3/eagle3_2k_{dataset_name}.json"
@@ -166,6 +184,7 @@ def run_eagle3_eval(dataset_name, prompts):
             'dataset': dataset_name,
             'max_prompt': max_p,
             'avg_eagle_throughput': avg_eagle,
+            'avg_accept_length': avg_accept_len,
             'results': results,
         }, f, indent=2)
     print(f"  Saved: {out_path}")
