@@ -100,9 +100,6 @@ def get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=
     # Continuation forward
     cont_ids = input_ids[:, prefix_len:]
     cont_out = teacher(cont_ids, past_key_values=cache, use_cache=True)
-    # cont_out.logits[:, i, :] predicts position prefix_len + i + 1
-    # We need predictions for positions prefix_len+1 to T-1
-    # = argmax of logits[:, :-1, :]
     targets = cont_out.logits[:, :-1, :].argmax(-1)  # [1, cont_len - 1]
 
     del cont_out, cache
@@ -110,28 +107,92 @@ def get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=
     return targets
 
 
+@torch.no_grad()
+def get_teacher_logits(teacher, input_ids, prefix_len, cont_len, prefill_chunk=2048):
+    """
+    Get teacher's full logits at continuation positions (for L_B).
+    Returns: [1, cont_len - 1, V] tensor of logits.
+    Also returns the teacher's prefix KV cache for sparse reuse.
+    """
+    device = input_ids.device
+
+    # Chunked prefill for prefix
+    cache = None
+    for start in range(0, prefix_len, prefill_chunk):
+        end = min(start + prefill_chunk, prefix_len)
+        out = teacher(input_ids[:, start:end], past_key_values=cache, use_cache=True)
+        cache = out.past_key_values
+        del out
+
+    # Save prefix cache for sparse teacher forward
+    prefix_cache_tuples = cache_to_tuples(cache)
+
+    # Continuation forward
+    cont_ids = input_ids[:, prefix_len:]
+    cont_out = teacher(cont_ids, past_key_values=cache, use_cache=True)
+    full_logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
+    targets = full_logits.argmax(-1)  # [1, cont_len-1]
+
+    del cont_out, cache
+    torch.cuda.empty_cache()
+    return targets, full_logits, prefix_cache_tuples
+
+
+@torch.no_grad()
+def get_teacher_sparse_logits(teacher, input_ids, prefix_cache_tuples, prefix_len, cont_len, budget, chunk_size, device):
+    """
+    Get teacher's logits under sparse KV cache (for L_B).
+    Returns: [1, cont_len - 1, V] tensor of logits.
+    """
+    sparse_tuples, _ = apply_triforce_sparse(prefix_cache_tuples, budget, chunk_size)
+    sparse_cache = build_dynamic_cache(sparse_tuples)
+
+    cont_ids = input_ids[:, prefix_len:]
+    cont_pos = torch.arange(prefix_len, prefix_len + cont_len, device=device).unsqueeze(0)
+    cont_out = teacher(cont_ids, past_key_values=sparse_cache, position_ids=cont_pos)
+    sparse_logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
+
+    del cont_out, sparse_cache
+    torch.cuda.empty_cache()
+    return sparse_logits
+
+
 # ── Training step ──
 
-def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False):
+def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False, beta=0.0, alpha=1.0):
     """
-    One training step (simplified: single forward pass).
+    One training step.
 
-    When budget < prefix_len → sparse cache (L_C-style)
-    When budget >= prefix_len → full cache (L_A-style)
-    Budget sampling {256,512,1024,2048,3800} provides multi-view training.
+    L = L_A + lam * L_C + beta * L_B
+    L_A: CE(student_full, teacher_argmax)
+    L_C: CE(student_sparse, teacher_argmax) with random budget
+    L_B: KL(teacher_full || student_sparse) - alpha * KL(teacher_sparse || student_sparse)
 
     Returns: (loss_val, loss_tensor)
     """
     V = student.config.vocab_size
+    use_sparse = budget < prefix_len
+    use_lb = beta > 0 and use_sparse
 
-    # 1. Teacher targets (no grad)
+    # 1. Teacher forward (no grad)
     if verbose:
-        print("    [1/3] Teacher forward...", flush=True)
-    teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=1024)
+        print(f"    [1/4] Teacher forward (L_B={'on' if use_lb else 'off'})...", flush=True)
+
+    if use_lb:
+        # Need full logits + sparse logits for L_B
+        teacher_targets, teacher_full_logits, teacher_prefix_cache = get_teacher_logits(
+            teacher, input_ids, prefix_len, cont_len, prefill_chunk=1024
+        )
+        teacher_sparse_logits = get_teacher_sparse_logits(
+            teacher, input_ids, teacher_prefix_cache, prefix_len, cont_len, budget, chunk_size, device
+        )
+        del teacher_prefix_cache
+    else:
+        teacher_targets = get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=1024)
 
     # 2. Student prefill prefix (no grad, chunked)
     if verbose:
-        print("    [2/3] Student prefill (no grad)...", flush=True)
+        print("    [2/4] Student prefill (no grad)...", flush=True)
     student.eval()
     with torch.no_grad():
         prefix_cache = None
@@ -148,13 +209,12 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
             del chunk_out
     student.train()
 
-    # 3. Sparsify cache if budget < prefix_len, then continuation forward (WITH grad)
+    # 3. Sparsify cache if needed, then continuation forward (WITH grad)
     cont_ids = input_ids[:, prefix_len:]
-    use_sparse = budget < prefix_len
 
     if use_sparse:
         if verbose:
-            print(f"    [3/3] Sparse forward (budget={budget})...", flush=True)
+            print(f"    [3/4] Sparse forward (budget={budget})...", flush=True)
         kv_tuples = cache_to_tuples(prefix_cache)
         sparse_tuples, _ = apply_triforce_sparse(kv_tuples, budget, chunk_size)
         cont_cache = build_dynamic_cache(sparse_tuples)
@@ -163,16 +223,43 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
         del prefix_cache
     else:
         if verbose:
-            print("    [3/3] Full forward...", flush=True)
+            print("    [3/4] Full forward...", flush=True)
         cont_out = student(cont_ids, past_key_values=prefix_cache)
 
-    logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
-    loss = F.cross_entropy(logits.reshape(-1, V), teacher_targets.reshape(-1))
+    # 4. Compute loss
+    if verbose:
+        print("    [4/4] Loss computation...", flush=True)
+
+    student_logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
+
+    # L_A + L_C (CE with teacher argmax)
+    loss_ce = F.cross_entropy(student_logits.reshape(-1, V), teacher_targets.reshape(-1))
+
+    if use_lb:
+        # L_B: KL(teacher_full || student) - alpha * KL(teacher_sparse || student)
+        student_log_probs = F.log_softmax(student_logits, dim=-1)
+        teacher_full_probs = F.softmax(teacher_full_logits.float(), dim=-1)
+        teacher_sparse_probs = F.softmax(teacher_sparse_logits.float(), dim=-1)
+
+        # KL(P || Q) = sum(P * log(P/Q)) = sum(P * (log P - log Q))
+        kl_full = F.kl_div(student_log_probs, teacher_full_probs, reduction='batchmean')
+        kl_sparse = F.kl_div(student_log_probs, teacher_sparse_probs, reduction='batchmean')
+
+        loss_b = kl_full - alpha * kl_sparse
+        loss = loss_ce + beta * loss_b
+
+        if verbose:
+            print(f"    L_CE={loss_ce.item():.4f}, L_B={loss_b.item():.4f} (KL_full={kl_full.item():.4f}, KL_sparse={kl_sparse.item():.4f})", flush=True)
+
+        del teacher_full_logits, teacher_sparse_logits, student_log_probs
+        del teacher_full_probs, teacher_sparse_probs
+    else:
+        loss = loss_ce
 
     if verbose:
         print(f"    loss={loss.item():.4f} (sparse={use_sparse})", flush=True)
 
-    del cont_out, logits, teacher_targets
+    del cont_out, student_logits, teacher_targets
     return loss.item(), loss
 
 
@@ -192,6 +279,10 @@ def main():
                         help="Chunk size for sparse cache selection")
     parser.add_argument("--lam", type=float, default=0.5,
                         help="Weight for L_C (sparse loss)")
+    parser.add_argument("--beta", type=float, default=0.0,
+                        help="Weight for L_B (shift-aware alignment)")
+    parser.add_argument("--alpha", type=float, default=1.0,
+                        help="Weight for KL_sparse penalty in L_B")
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--warmup_steps", type=int, default=150,
@@ -232,7 +323,10 @@ def main():
         print(f"Loss:       L = L_A only (full cache, no sparse training)")
         print(f"Budgets:    full cache (budget={prefix_len})")
     else:
-        print(f"Loss:       L = L_A + {args.lam} * L_C  (β=0, L_B off)")
+        if args.beta > 0:
+            print(f"Loss:       L = L_A + {args.lam} * L_C + {args.beta} * L_B  (α={args.alpha})")
+        else:
+            print(f"Loss:       L = L_A + {args.lam} * L_C  (β=0, L_B off)")
         print(f"Budgets:    {BUDGETS}  weights={BUDGET_WEIGHTS}")
     print(f"Optimizer:  AdamW lr={args.lr} wd={args.weight_decay}")
     print(f"Schedule:   warmup={args.warmup_steps} → cosine → 0")
@@ -350,6 +444,7 @@ def main():
                 prefix_len, args.cont_len,
                 budget, args.chunk_size, args.lam, device,
                 verbose=is_verbose,
+                beta=args.beta, alpha=args.alpha,
             )
         except torch.cuda.OutOfMemoryError:
             print(f"  [Step {step}] OOM with budget={budget}, skipping", flush=True)
