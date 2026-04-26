@@ -237,16 +237,16 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
 
     if use_lb:
         # L_B: KL(teacher_full || student) - alpha * KL(teacher_sparse || student)
-        student_log_probs = F.log_softmax(student_logits, dim=-1)
-        teacher_full_probs = F.softmax(teacher_full_logits.float(), dim=-1)
-        teacher_sparse_probs = F.softmax(teacher_sparse_logits.float(), dim=-1)
+        student_log_probs = F.log_softmax(student_logits.float(), dim=-1)
+        teacher_full_log_probs = F.log_softmax(teacher_full_logits.float(), dim=-1)
+        teacher_sparse_log_probs = F.log_softmax(teacher_sparse_logits.float(), dim=-1)
 
-        # KL(P || Q) = sum(P * log(P/Q)) = sum(P * (log P - log Q))
-        kl_full = F.kl_div(student_log_probs, teacher_full_probs, reduction='batchmean')
-        kl_sparse = F.kl_div(student_log_probs, teacher_sparse_probs, reduction='batchmean')
+        # Use log_target=True for numerical stability
+        kl_full = F.kl_div(student_log_probs, teacher_full_log_probs, reduction='batchmean', log_target=True)
+        kl_sparse = F.kl_div(student_log_probs, teacher_sparse_log_probs, reduction='batchmean', log_target=True)
 
         loss_b = kl_full - alpha * kl_sparse
-        # Clamp L_B to prevent extreme values from destabilizing training
+        # Clamp L_B to prevent extreme values
         loss_b = torch.clamp(loss_b, -5.0, 5.0)
         loss = loss_ce + beta * loss_b
 
