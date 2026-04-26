@@ -254,7 +254,7 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
             print(f"    L_CE={loss_ce.item():.4f}, L_B={loss_b.item():.4f} (KL_full={kl_full.item():.4f}, KL_sparse={kl_sparse.item():.4f})", flush=True)
 
         del teacher_full_logits, teacher_sparse_logits, student_log_probs
-        del teacher_full_probs, teacher_sparse_probs
+        del teacher_full_log_probs, teacher_sparse_log_probs
     else:
         loss = loss_ce
 
