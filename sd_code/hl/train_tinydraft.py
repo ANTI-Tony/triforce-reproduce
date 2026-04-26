@@ -247,7 +247,7 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
 
         loss_b = kl_full - alpha * kl_sparse
         # Clamp L_B to prevent extreme values from destabilizing training
-        loss_b = torch.clamp(loss_b, -20.0, 20.0)
+        loss_b = torch.clamp(loss_b, -5.0, 5.0)
         loss = loss_ce + beta * loss_b
 
         if verbose:
