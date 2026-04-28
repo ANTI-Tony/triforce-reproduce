@@ -37,8 +37,8 @@ sys.path.insert(0, os.path.join(current_dir, "speculative"))
 from sparse_cache import apply_triforce_sparse
 
 # ── Budget sampling config ──
-BUDGETS = [256, 512, 1024, 2048, 3800]
-BUDGET_WEIGHTS = [0.3, 0.3, 0.2, 0.1, 0.1]
+BUDGETS = [256, 512, 1024, 2048]
+BUDGET_WEIGHTS = [0.4, 0.3, 0.2, 0.1]
 
 
 def cache_to_tuples(cache):
@@ -108,11 +108,11 @@ def get_teacher_targets(teacher, input_ids, prefix_len, cont_len, prefill_chunk=
 
 
 @torch.no_grad()
-def get_teacher_logits(teacher, input_ids, prefix_len, cont_len, prefill_chunk=2048):
+def get_teacher_topk_logits(teacher, input_ids, prefix_len, cont_len, prefill_chunk=2048, topk=32):
     """
-    Get teacher's full logits at continuation positions (for L_B).
-    Returns: [1, cont_len - 1, V] tensor of logits.
-    Also returns the teacher's prefix KV cache for sparse reuse.
+    Get teacher's top-k token indices and logits at continuation positions (for L_B).
+    Returns: targets [1, cont_len-1], topk_indices [1, cont_len-1, k], topk_logits [1, cont_len-1, k],
+             prefix_cache_tuples (for sparse reuse).
     """
     device = input_ids.device
 
@@ -133,16 +133,19 @@ def get_teacher_logits(teacher, input_ids, prefix_len, cont_len, prefill_chunk=2
     full_logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
     targets = full_logits.argmax(-1)  # [1, cont_len-1]
 
-    del cont_out, cache
+    # Get top-k indices and logits
+    topk_logits, topk_indices = torch.topk(full_logits, topk, dim=-1)  # [1, cont_len-1, k]
+
+    del cont_out, full_logits, cache
     torch.cuda.empty_cache()
-    return targets, full_logits, prefix_cache_tuples
+    return targets, topk_indices, topk_logits, prefix_cache_tuples
 
 
 @torch.no_grad()
-def get_teacher_sparse_logits(teacher, input_ids, prefix_cache_tuples, prefix_len, cont_len, budget, chunk_size, device):
+def get_teacher_sparse_topk_logits(teacher, input_ids, prefix_cache_tuples, prefix_len, cont_len, budget, chunk_size, device, topk_indices):
     """
-    Get teacher's logits under sparse KV cache (for L_B).
-    Returns: [1, cont_len - 1, V] tensor of logits.
+    Get teacher's logits under sparse KV cache at the same top-k positions (for L_B).
+    Returns: [1, cont_len-1, k] tensor of logits at topk positions.
     """
     sparse_tuples, _ = apply_triforce_sparse(prefix_cache_tuples, budget, chunk_size)
     sparse_cache = build_dynamic_cache(sparse_tuples)
@@ -152,39 +155,44 @@ def get_teacher_sparse_logits(teacher, input_ids, prefix_cache_tuples, prefix_le
     cont_out = teacher(cont_ids, past_key_values=sparse_cache, position_ids=cont_pos)
     sparse_logits = cont_out.logits[:, :-1, :]  # [1, cont_len-1, V]
 
-    del cont_out, sparse_cache
+    # Gather logits at top-k positions
+    sparse_topk_logits = torch.gather(sparse_logits, -1, topk_indices)  # [1, cont_len-1, k]
+
+    del cont_out, sparse_cache, sparse_logits
     torch.cuda.empty_cache()
-    return sparse_logits
+    return sparse_topk_logits
 
 
 # ── Training step ──
 
-def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False, beta=0.0, alpha=1.0):
+def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_size, lam, device, verbose=False, beta=0.0, topk=32, step=0, lb_every_n=2):
     """
     One training step.
 
     L = L_A + lam * L_C + beta * L_B
-    L_A: CE(student_full, teacher_argmax)
-    L_C: CE(student_sparse, teacher_argmax) with random budget
-    L_B: KL(teacher_full || student_sparse) - alpha * KL(teacher_sparse || student_sparse)
+    L_A: CE(student, teacher_argmax) — top-1 acceptance
+    L_C: same as L_A but with sparse cache — multi-view
+    L_B: hinge top-k KL = max(0, KL_full - KL_sparse) on teacher's top-k tokens
 
-    Returns: (loss_val, loss_tensor)
+    L_B only computed every lb_every_n steps to save cost.
     """
     V = student.config.vocab_size
     use_sparse = budget < prefix_len
-    use_lb = beta > 0 and use_sparse
+    # L_B: only when beta>0, sparse, and on schedule (every N steps)
+    use_lb = beta > 0 and use_sparse and (step % lb_every_n == 0)
 
     # 1. Teacher forward (no grad)
     if verbose:
         print(f"    [1/4] Teacher forward (L_B={'on' if use_lb else 'off'})...", flush=True)
 
     if use_lb:
-        # Need full logits + sparse logits for L_B
-        teacher_targets, teacher_full_logits, teacher_prefix_cache = get_teacher_logits(
-            teacher, input_ids, prefix_len, cont_len, prefill_chunk=1024
+        # Get top-1 targets + top-k logits + prefix cache for sparse reuse
+        teacher_targets, topk_indices, teacher_full_topk, teacher_prefix_cache = get_teacher_topk_logits(
+            teacher, input_ids, prefix_len, cont_len, prefill_chunk=1024, topk=topk
         )
-        teacher_sparse_logits = get_teacher_sparse_logits(
-            teacher, input_ids, teacher_prefix_cache, prefix_len, cont_len, budget, chunk_size, device
+        # Teacher sparse forward at same top-k positions
+        teacher_sparse_topk = get_teacher_sparse_topk_logits(
+            teacher, input_ids, teacher_prefix_cache, prefix_len, cont_len, budget, chunk_size, device, topk_indices
         )
         del teacher_prefix_cache
     else:
@@ -236,25 +244,27 @@ def train_step(student, teacher, input_ids, prefix_len, cont_len, budget, chunk_
     loss_ce = F.cross_entropy(student_logits.reshape(-1, V), teacher_targets.reshape(-1))
 
     if use_lb:
-        # L_B: KL(teacher_full || student) - alpha * KL(teacher_sparse || student)
-        student_log_probs = F.log_softmax(student_logits.float(), dim=-1)
-        teacher_full_log_probs = F.log_softmax(teacher_full_logits.float(), dim=-1)
-        teacher_sparse_log_probs = F.log_softmax(teacher_sparse_logits.float(), dim=-1)
+        # Top-k KL: gather student logits at teacher's top-k positions
+        student_topk_logits = torch.gather(student_logits, -1, topk_indices)  # [1, cont_len-1, k]
 
-        # Use log_target=True for numerical stability
-        kl_full = F.kl_div(student_log_probs, teacher_full_log_probs, reduction='batchmean', log_target=True)
-        kl_sparse = F.kl_div(student_log_probs, teacher_sparse_log_probs, reduction='batchmean', log_target=True)
+        # Normalize over k tokens (log_softmax)
+        student_topk_lp = F.log_softmax(student_topk_logits.float(), dim=-1)
+        teacher_full_topk_lp = F.log_softmax(teacher_full_topk.float(), dim=-1)
+        teacher_sparse_topk_lp = F.log_softmax(teacher_sparse_topk.float(), dim=-1)
 
-        loss_b = kl_full - alpha * kl_sparse
-        # Clamp L_B to prevent extreme values
-        loss_b = torch.clamp(loss_b, -5.0, 5.0)
+        # KL on k tokens only — much smaller scale
+        kl_full = F.kl_div(student_topk_lp, teacher_full_topk_lp, reduction='batchmean', log_target=True)
+        kl_sparse = F.kl_div(student_topk_lp, teacher_sparse_topk_lp, reduction='batchmean', log_target=True)
+
+        # Hinge: max(0, KL_full - KL_sparse + m), m=0
+        loss_b = torch.clamp(kl_full - kl_sparse, min=0.0)
         loss = loss_ce + beta * loss_b
 
         if verbose:
             print(f"    L_CE={loss_ce.item():.4f}, L_B={loss_b.item():.4f} (KL_full={kl_full.item():.4f}, KL_sparse={kl_sparse.item():.4f})", flush=True)
 
-        del teacher_full_logits, teacher_sparse_logits, student_log_probs
-        del teacher_full_log_probs, teacher_sparse_log_probs
+        del teacher_full_topk, teacher_sparse_topk, topk_indices
+        del student_topk_logits, student_topk_lp, teacher_full_topk_lp, teacher_sparse_topk_lp
     else:
         loss = loss_ce
 
@@ -282,9 +292,9 @@ def main():
     parser.add_argument("--lam", type=float, default=0.5,
                         help="Weight for L_C (sparse loss)")
     parser.add_argument("--beta", type=float, default=0.0,
-                        help="Weight for L_B (shift-aware alignment)")
-    parser.add_argument("--alpha", type=float, default=1.0,
-                        help="Weight for KL_sparse penalty in L_B")
+                        help="Weight for L_B (shift-aware alignment, max after warmup)")
+    parser.add_argument("--lb_every_n", type=int, default=2,
+                        help="Compute L_B every N steps (saves ~50%% teacher sparse cost)")
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--warmup_steps", type=int, default=150,
@@ -441,12 +451,20 @@ def main():
 
         try:
             is_verbose = (step <= 3)  # Verbose for first 3 steps
+            # β warmup: first 10% steps β=0, then linear to beta_max over 90%
+            warmup_frac = 0.1
+            if step <= int(args.total_steps * warmup_frac):
+                beta_now = 0.0
+            else:
+                progress = (step - int(args.total_steps * warmup_frac)) / max(1, args.total_steps * (1 - warmup_frac))
+                beta_now = args.beta * progress
+
             loss_val, loss_tensor = train_step(
                 student, teacher, input_ids,
                 prefix_len, args.cont_len,
                 budget, args.chunk_size, args.lam, device,
                 verbose=is_verbose,
-                beta=args.beta, alpha=args.alpha,
+                beta=beta_now, topk=32, step=step, lb_every_n=args.lb_every_n,
             )
         except torch.cuda.OutOfMemoryError:
             print(f"  [Step {step}] OOM with budget={budget}, skipping", flush=True)
