@@ -336,7 +336,7 @@ def main():
         print(f"Budgets:    full cache (budget={prefix_len})")
     else:
         if args.beta > 0:
-            print(f"Loss:       L = L_A + {args.lam} * L_C + {args.beta} * L_B  (α={args.alpha})")
+            print(f"Loss:       L = L_A + {args.lam} * L_C + {args.beta} * L_B  (hinge top-k, every {args.lb_every_n} steps)")
         else:
             print(f"Loss:       L = L_A + {args.lam} * L_C  (β=0, L_B off)")
         print(f"Budgets:    {BUDGETS}  weights={BUDGET_WEIGHTS}")
